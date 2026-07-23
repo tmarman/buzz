@@ -79,6 +79,20 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goSurface = React.useCallback(
+    (name = "control", behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/surfaces/$name",
+          params: {
+            name,
+          },
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goProjects = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
@@ -303,6 +317,7 @@ export function useAppNavigation() {
     goProject,
     goProjects,
     goPulse,
+    goSurface,
     goSettings,
     goWorkflow,
     goWorkflows,

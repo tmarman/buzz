@@ -9,6 +9,7 @@ export type AppView =
   | "agents"
   | "workflows"
   | "pulse"
+  | "surfaces"
   | "projects";
 
 const WINDOW_DRAG_HANDLE_HEIGHT = 44;
@@ -150,6 +151,13 @@ export function deriveShellRoute(pathname: string): {
     return {
       selectedChannelId: null,
       selectedView: "pulse",
+    };
+  }
+
+  if (pathname === "/surfaces" || pathname.startsWith("/surfaces/")) {
+    return {
+      selectedChannelId: null,
+      selectedView: "surfaces",
     };
   }
 

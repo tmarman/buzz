@@ -103,6 +103,7 @@ type AppSidebarProps = {
     | "agents"
     | "workflows"
     | "pulse"
+    | "surfaces"
     | "projects";
   unreadChannelCounts: ReadonlyMap<string, number>;
   unreadChannelIds: ReadonlySet<string>;
@@ -143,6 +144,7 @@ type AppSidebarProps = {
   onSelectAgents: () => void;
   onSelectProjects: () => void;
   onSelectPulse: () => void;
+  onSelectSurface: () => void;
   onSelectWorkflows: () => void;
   onSelectHome: () => void;
   onSelectChannel: (channelId: string) => void;
@@ -210,6 +212,7 @@ export function AppSidebar({
   onSelectAgents,
   onSelectProjects,
   onSelectPulse,
+  onSelectSurface,
   onSelectWorkflows,
   onSelectHome,
   onSelectChannel,
@@ -597,6 +600,7 @@ export function AppSidebar({
                 onSelectHome={onSelectHome}
                 onSelectProjects={onSelectProjects}
                 onSelectPulse={onSelectPulse}
+                onSelectSurface={onSelectSurface}
                 onSelectWorkflows={onSelectWorkflows}
                 selectedView={selectedView}
               />
