@@ -28,7 +28,8 @@ export function applyVoxelboxSeedFromUrl() {
       id: "voxelbox:weaver",
       displayName: "Weaver",
       avatarUrl: AVATARS.weaver,
-      systemPrompt: "Portfolio orchestrator — connects threads across all orgs.",
+      systemPrompt:
+        "Portfolio orchestrator — connects threads across all orgs.",
       model: "opus",
     },
     {

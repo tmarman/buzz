@@ -14,9 +14,7 @@ export function storageKey(pubkey: string): string {
   return `${STORAGE_KEY_PREFIX}:${pubkey}`;
 }
 
-export function parseSurfacePayload(
-  json: unknown,
-): ChannelSurfaceStore | null {
+export function parseSurfacePayload(json: unknown): ChannelSurfaceStore | null {
   if (typeof json !== "object" || json === null) return null;
   const obj = json as Record<string, unknown>;
   if (obj.version !== 1) return null;
