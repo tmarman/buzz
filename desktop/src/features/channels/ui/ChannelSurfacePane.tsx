@@ -17,7 +17,11 @@ export function ChannelSurfacePane({
   if (state.mode === "frame") {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <SurfaceFrame name={state.surface} />
+        <SurfaceFrame
+          embedded
+          name={state.surface}
+          scope={state.executionScope}
+        />
       </div>
     );
   }

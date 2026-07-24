@@ -27,9 +27,36 @@ export const SURFACE_BASE_URL = "http://localhost:1337/surfaces/";
 // allow-same-origin to first-party surfaces is documented PRD policy.
 export const SURFACE_SANDBOX = "allow-scripts allow-same-origin";
 
-export function SurfaceFrame({ name }: { name: string }) {
+export type SurfaceScope = "global" | `space:${string}`;
+
+export function buildSurfaceUrl({
+  embedded = false,
+  name,
+  scope = "global",
+}: {
+  embedded?: boolean;
+  name: string;
+  scope?: SurfaceScope;
+}) {
+  const url = new URL(`${SURFACE_BASE_URL}${encodeURIComponent(name)}/`);
+  if (embedded) {
+    url.searchParams.set("embedded", "1");
+  }
+  url.searchParams.set("scope", scope);
+  return url.toString();
+}
+
+export function SurfaceFrame({
+  embedded = false,
+  name,
+  scope = "global",
+}: {
+  embedded?: boolean;
+  name: string;
+  scope?: SurfaceScope;
+}) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
-  const src = `${SURFACE_BASE_URL}${encodeURIComponent(name)}/`;
+  const src = buildSurfaceUrl({ embedded, name, scope });
 
   React.useEffect(() => {
     const root = document.documentElement;

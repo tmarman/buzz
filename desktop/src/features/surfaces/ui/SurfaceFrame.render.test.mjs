@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 // Contract this test pins:
 //   SurfaceFrame.tsx — a reusable component that renders the surface iframe
 //   WITH a sandbox attribute (SurfaceScreen currently has only `allow`).
-//     - src = http://localhost:1337/surfaces/<encodeURIComponent(name)>/
+//     - src = http://localhost:1337/surfaces/<encodeURIComponent(name)>/?scope=global
 //     - title = name
 //     - carries a non-empty sandbox attribute that permits scripts
 //       (surfaces run JS and call their own API on :1337)
@@ -50,7 +50,7 @@ test("SurfaceFrame derives src from the name with the correct base + title", () 
     React.createElement(SurfaceFrame, { name: "agency" }),
   );
   assert.ok(
-    html.includes('src="http://localhost:1337/surfaces/agency/"'),
+    html.includes('src="http://localhost:1337/surfaces/agency/?scope=global"'),
     "src should be the surface base URL + name",
   );
   assert.ok(html.includes('title="agency"'), "title should equal the name");
@@ -61,8 +61,26 @@ test("SurfaceFrame encodeURIComponent-encodes the name in the src", () => {
     React.createElement(SurfaceFrame, { name: "voxelbox agency" }),
   );
   assert.ok(
-    html.includes('src="http://localhost:1337/surfaces/voxelbox%20agency/"'),
+    html.includes(
+      'src="http://localhost:1337/surfaces/voxelbox%20agency/?scope=global"',
+    ),
     "space in the name must be percent-encoded in the src",
+  );
+});
+
+test("SurfaceFrame encodes embedded Space context explicitly", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SurfaceFrame, {
+      embedded: true,
+      name: "portfolio",
+      scope: "space:voxelbox-ai",
+    }),
+  );
+  assert.ok(
+    html.includes(
+      'src="http://localhost:1337/surfaces/portfolio/?embedded=1&amp;scope=space%3Avoxelbox-ai"',
+    ),
+    "embedded surfaces must receive the active Space execution scope",
   );
 });
 
@@ -82,7 +100,7 @@ test("SurfaceScreen renders the sandboxed frame with the mapped src", () => {
     "refactored SurfaceScreen must render the sandbox attribute via SurfaceFrame",
   );
   assert.ok(
-    html.includes('src="http://localhost:1337/surfaces/agency/"'),
-    "SurfaceScreen keeps the surface src (no regression)",
+    html.includes('src="http://localhost:1337/surfaces/agency/?scope=global"'),
+    "top-level SurfaceScreen uses global execution scope",
   );
 });

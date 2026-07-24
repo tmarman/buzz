@@ -1,6 +1,10 @@
 import * as React from "react";
 
 import {
+  getChannelSpace,
+  subscribeChannelSpace,
+} from "@/features/sidebar/lib/channelSpaceStorage";
+import {
   getChannelSurfaces,
   subscribeChannelSurface,
 } from "@/features/sidebar/lib/channelSurfaceStorage";
@@ -14,6 +18,7 @@ export type ChannelSurfaceTabState =
       mode: "frame";
       surface: string;
       descriptor: InstalledSurfaceDescriptor;
+      executionScope: "global" | `space:${string}`;
     }
   | { mode: "empty"; surface: string; descriptor: null };
 
@@ -26,14 +31,23 @@ export type ChannelSurfaceTabState =
 export function resolveChannelSurfaceTabs(
   mappedSurfaces: readonly string[],
   installedSurfaces: readonly InstalledSurfaceDescriptor[],
+  selectedSpace: string | null = null,
 ): ChannelSurfaceTabState[] {
   const installedByName = new Map(
-    installedSurfaces.map((surface) => [surface.name, surface]),
+    installedSurfaces
+      .filter(
+        (surface) =>
+          surface.space === "global" || surface.space === selectedSpace,
+      )
+      .map((surface) => [surface.name, surface]),
   );
+  const executionScope = selectedSpace
+    ? (`space:${selectedSpace}` as const)
+    : ("global" as const);
   return mappedSurfaces.map((surface) => {
     const descriptor = installedByName.get(surface);
     return descriptor
-      ? { mode: "frame" as const, surface, descriptor }
+      ? { mode: "frame" as const, surface, descriptor, executionScope }
       : { mode: "empty" as const, surface, descriptor: null };
   });
 }
@@ -82,6 +96,15 @@ export function useChannelSurfaceTab({
     () => JSON.parse(mappedSurfacesSerialized) as string[],
     [mappedSurfacesSerialized],
   );
+  const getSelectedSpace = React.useCallback((): string | null => {
+    if (!pubkey || !channelId) return null;
+    return getChannelSpace(pubkey, channelId) ?? null;
+  }, [pubkey, channelId]);
+  const selectedSpace = React.useSyncExternalStore(
+    subscribeChannelSpace,
+    getSelectedSpace,
+    getSelectedSpace,
+  );
 
   // Re-validate the allowlist whenever the mapping changes (and on mount). Any
   // discovery failure degrades to [] so the allowlist gate falls through to the
@@ -103,8 +126,13 @@ export function useChannelSurfaceTab({
   }, [channelId]);
 
   const tabs = React.useMemo(
-    () => resolveChannelSurfaceTabs(mappedSurfaces, installedSurfaces),
-    [mappedSurfaces, installedSurfaces],
+    () =>
+      resolveChannelSurfaceTabs(
+        mappedSurfaces,
+        installedSurfaces,
+        selectedSpace,
+      ),
+    [mappedSurfaces, installedSurfaces, selectedSpace],
   );
 
   const activeState = tabs.find((tab) => tab.surface === activeSurface) ?? null;

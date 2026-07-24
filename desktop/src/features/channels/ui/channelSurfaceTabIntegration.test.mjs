@@ -90,13 +90,16 @@ test("picker select → storage write → tab shows the sandboxed frame", () => 
 
   assert.deepEqual(tab.state, {
     descriptor: descriptor("agency"),
+    executionScope: "global",
     mode: "frame",
     surface: "agency",
   });
   const html = paneHtml(tab.state);
   assert.ok(html.includes("<iframe"), "frame mode renders an iframe");
   assert.ok(
-    html.includes('src="http://localhost:1337/surfaces/agency/"'),
+    html.includes(
+      'src="http://localhost:1337/surfaces/agency/?embedded=1&amp;scope=global"',
+    ),
     "iframe points at the mapped surface URL",
   );
   assert.match(html, /sandbox="[^"]*allow-scripts[^"]*"/);

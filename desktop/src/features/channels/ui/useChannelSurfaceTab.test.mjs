@@ -46,11 +46,62 @@ test("mappings preserve order and discovered tabs show frames", () => {
         mode: "frame",
         surface: "notebook",
         descriptor: descriptor("notebook"),
+        executionScope: "global",
       },
       {
         mode: "frame",
         surface: "agency",
         descriptor: descriptor("agency"),
+        executionScope: "global",
+      },
+    ],
+  );
+});
+
+test("global and Space-owned apps execute inside the selected Space", () => {
+  const spaceApp = {
+    ...descriptor("build"),
+    space: "voxelbox-ai",
+  };
+  assert.deepEqual(
+    resolveChannelSurfaceTabs(
+      ["agency", "build"],
+      [...INSTALLED, spaceApp],
+      "voxelbox-ai",
+    ),
+    [
+      {
+        descriptor: descriptor("agency"),
+        executionScope: "space:voxelbox-ai",
+        mode: "frame",
+        surface: "agency",
+      },
+      {
+        descriptor: spaceApp,
+        executionScope: "space:voxelbox-ai",
+        mode: "frame",
+        surface: "build",
+      },
+    ],
+  );
+});
+
+test("apps owned by another Space never reach the frame allowlist", () => {
+  const foreignApp = {
+    ...descriptor("finances"),
+    space: "finances",
+  };
+  assert.deepEqual(
+    resolveChannelSurfaceTabs(
+      ["finances"],
+      [...INSTALLED, foreignApp],
+      "voxelbox-ai",
+    ),
+    [
+      {
+        descriptor: null,
+        mode: "empty",
+        surface: "finances",
       },
     ],
   );
@@ -81,6 +132,7 @@ test("ChannelSurfacePane renders the sandboxed frame when mode is frame", () => 
     React.createElement(ChannelSurfacePane, {
       state: {
         descriptor: descriptor("agency"),
+        executionScope: "space:voxelbox-ai",
         mode: "frame",
         surface: "agency",
       },
@@ -88,8 +140,10 @@ test("ChannelSurfacePane renders the sandboxed frame when mode is frame", () => 
   );
   assert.ok(html.includes("<iframe"), "frame mode should render an iframe");
   assert.ok(
-    html.includes('src="http://localhost:1337/surfaces/agency/"'),
-    "iframe should point at the mapped surface URL",
+    html.includes(
+      'src="http://localhost:1337/surfaces/agency/?embedded=1&amp;scope=space%3Avoxelbox-ai"',
+    ),
+    "iframe should receive embedded mode and the channel Space scope",
   );
   assert.match(
     html,
