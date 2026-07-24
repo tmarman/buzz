@@ -5,13 +5,10 @@ import {
   clearChannelSurface,
   getChannelSurface,
   setChannelSurface,
+  subscribeChannelSurface,
 } from "@/features/sidebar/lib/channelSurfaceStorage";
+import { fetchInstalledSurfaces } from "@/features/surfaces/lib/surfaceDiscovery";
 import { cn } from "@/shared/lib/cn";
-
-// Daemon surface discovery endpoint. Mirrors the allowlist source the surface
-// pane gates against; any failure degrades to an empty list (no surfaces
-// offered) rather than throwing.
-const SURFACE_DISCOVERY_URL = "http://localhost:1337/surfaces/";
 
 type ChannelSurfacePickerProps = {
   surfaces: string[];
@@ -96,54 +93,35 @@ export function ChannelSurfacePicker({
   );
 }
 
-// Best-effort daemon discovery: resolves the `name` of each installed surface,
-// degrading to [] on any failure (non-ok, throw, non-array, missing names) so
-// the picker falls through to its neutral empty state.
-async function discoverSurfaces(): Promise<string[]> {
-  try {
-    const response = await fetch(SURFACE_DISCOVERY_URL);
-    if (!response.ok) {
-      return [];
-    }
-    const body: unknown = await response.json();
-    if (!Array.isArray(body)) {
-      return [];
-    }
-    return body
-      .map((entry) =>
-        entry !== null &&
-        typeof entry === "object" &&
-        typeof (entry as { name?: unknown }).name === "string"
-          ? (entry as { name: string }).name
-          : null,
-      )
-      .filter((name): name is string => name !== null);
-  } catch {
-    return [];
-  }
-}
-
 type ChannelSurfacePickerSectionProps = {
   channelId: string;
   pubkey: string;
 };
 
 // Connected wrapper that lives inside the channel management popover. Sources
-// surfaces from daemon discovery and reads/writes the device-local channel ->
-// surface mapping through channelSurfaceStorage.
+// surfaces from the shared daemon discovery (single source with the surface
+// pane's allowlist) and reads/writes the device-local channel -> surface
+// mapping through channelSurfaceStorage. The selection is read REACTIVELY so it
+// reflects clears made elsewhere (e.g. the channel app tab).
 export function ChannelSurfacePickerSection({
   channelId,
   pubkey,
 }: ChannelSurfacePickerSectionProps) {
   const [surfaces, setSurfaces] = React.useState<string[]>([]);
-  const [selectedSurface, setSelectedSurface] = React.useState<string | null>(
-    () => getChannelSurface(pubkey, channelId) ?? null,
+
+  const getSelected = React.useCallback(
+    (): string | null => getChannelSurface(pubkey, channelId) ?? null,
+    [pubkey, channelId],
+  );
+  const selectedSurface = React.useSyncExternalStore(
+    subscribeChannelSurface,
+    getSelected,
+    getSelected,
   );
 
   React.useEffect(() => {
-    setSelectedSurface(getChannelSurface(pubkey, channelId) ?? null);
     let active = true;
-    void discoverSurfaces().then((names) => {
+    void fetchInstalledSurfaces().then((names) => {
       if (active) {
         setSurfaces(names);
       }
@@ -151,16 +129,14 @@ export function ChannelSurfacePickerSection({
     return () => {
       active = false;
     };
-  }, [channelId, pubkey]);
+  }, []);
 
   function handleSelect(name: string) {
     setChannelSurface(pubkey, channelId, name);
-    setSelectedSurface(name);
   }
 
   function handleClear() {
     clearChannelSurface(pubkey, channelId);
-    setSelectedSurface(null);
   }
 
   return (

@@ -1,10 +1,10 @@
 import * as React from "react";
 
-import { getChannelSurface } from "@/features/sidebar/lib/channelSurfaceStorage";
-
-// Discovery endpoint the daemon serves the installed-surface manifest from.
-// Kept in step with SurfaceScreen's SURFACE_BASE_URL (same :1337 origin).
-const SURFACE_DISCOVERY_URL = "http://localhost:1337/surfaces/";
+import {
+  getChannelSurface,
+  subscribeChannelSurface,
+} from "@/features/sidebar/lib/channelSurfaceStorage";
+import { fetchInstalledSurfaces } from "@/features/surfaces/lib/surfaceDiscovery";
 
 export type ChannelSurfaceTabState =
   | { showTab: false; mode: "none" }
@@ -37,32 +37,12 @@ export type ChannelSurfaceTabHandle = {
   toggle: () => void;
 };
 
-// Self-contained discovery read: GETs the installed-surface manifest and
-// resolves the `name` values. ANY failure degrades to [] so the allowlist gate
-// simply falls through to the empty state — it never throws into render.
-async function fetchInstalledSurfaceNames(
-  signal: AbortSignal,
-): Promise<string[]> {
-  try {
-    const response = await fetch(SURFACE_DISCOVERY_URL, { signal });
-    if (!response.ok) return [];
-    const body: unknown = await response.json();
-    if (!Array.isArray(body)) return [];
-    return body.flatMap((entry) =>
-      entry && typeof entry === "object" && typeof entry.name === "string"
-        ? [entry.name]
-        : [],
-    );
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Wires the app tab into a channel screen: reads the device-local channel ->
- * surface mapping, discovers installed surfaces (allowlist), and tracks whether
- * the app tab is currently activated (body swapped to the SurfaceFrame).
- * Activation resets whenever the active channel changes.
+ * surface mapping REACTIVELY (so a picker set/clear updates the tab without a
+ * remount), discovers installed surfaces (allowlist), and tracks whether the app
+ * tab is currently activated (body swapped to the SurfaceFrame). Activation
+ * resets whenever the active channel changes.
  */
 export function useChannelSurfaceTab({
   channelId,
@@ -76,23 +56,37 @@ export function useChannelSurfaceTab({
   );
   const [active, setActive] = React.useState(false);
 
+  // Reactive read of the mapping. useSyncExternalStore re-reads whenever the
+  // storage module reports a set/clear, so clearing the mapping (in the picker)
+  // flips the tab to its empty/none state instead of stranding a live iframe.
+  const getMappedSurface = React.useCallback((): string | null => {
+    if (!pubkey || !channelId) return null;
+    return getChannelSurface(pubkey, channelId) ?? null;
+  }, [pubkey, channelId]);
+  const mappedSurface = React.useSyncExternalStore(
+    subscribeChannelSurface,
+    getMappedSurface,
+    getMappedSurface,
+  );
+
+  // Re-validate the allowlist whenever the mapping changes (and on mount). Any
+  // discovery failure degrades to [] so the allowlist gate falls through to the
+  // empty state rather than throwing into render.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mappedSurface is the intended re-fetch trigger (fresh allowlist when a surface is opened/remapped), not a value read in the effect body.
   React.useEffect(() => {
-    const controller = new AbortController();
-    void fetchInstalledSurfaceNames(controller.signal).then((names) => {
-      if (!controller.signal.aborted) setInstalledSurfaces(names);
+    let cancelled = false;
+    void fetchInstalledSurfaces().then((names) => {
+      if (!cancelled) setInstalledSurfaces(names);
     });
-    return () => controller.abort();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [mappedSurface]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset activation exactly when the active channel changes.
   React.useEffect(() => {
     setActive(false);
   }, [channelId]);
-
-  const mappedSurface = React.useMemo(() => {
-    if (!pubkey || !channelId) return null;
-    return getChannelSurface(pubkey, channelId) ?? null;
-  }, [pubkey, channelId]);
 
   const state = React.useMemo(
     () => resolveChannelSurfaceTab(mappedSurface, installedSurfaces),

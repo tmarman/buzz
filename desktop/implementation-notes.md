@@ -1,146 +1,189 @@
 # Implementation Notes — Surfaces in the Buzz Desktop Client (Track E)
 
-Final integration pass for the surfaces feature: embedding voxelbox surfaces in
-the Buzz desktop client, plus the per-channel surface mapping that lets a channel
-open a chosen surface as a tab. This file is the durable record of what changed
-against the spec when the parallel tracks met reality.
+Durable record of the Track E consolidation pass: five parallel branches merged
+into one integration branch, their adversarial-review findings fixed, and the
+whole thing greened against every red baseline. Embeds voxelbox surfaces in the
+Buzz desktop client and lets a channel open a chosen surface as an in-channel app
+tab.
 
-The feature is composed of several tracks branched off `voxelbox/agency-prototype`:
+## What the tracks are
 
-- **surface-channel-storage** — `channelSurfaceStorage.ts`: a versioned,
-  device-local `localStorage` store keyed per pubkey mapping `channelId -> surface name`.
-- **surface-frame-sandbox** — `SurfaceFrame.tsx`: a reusable component that renders
-  the surface iframe *with* a sandbox attribute; `SurfaceScreen.tsx` refactored to use it.
-- **surface-discovery** — `surfaceDiscovery.ts`: lists installable surfaces.
-- **channel-surface-picker** — `ChannelSurfacePicker.tsx` / `useChannelSurfaceTab.ts`:
-  the UI + hook that read/write the device-local mapping.
-- **surface-integration-gates** (this track) — green the gates, write these notes,
-  and verify the device-local invariant held across every track.
+Branched off `voxelbox/agency-prototype` and merged in dependency order:
 
-## Gate status
+1. **surface-discovery-allowlist** — `surfaceDiscovery.ts`:
+   `fetchInstalledSurfaces()` GETs the daemon manifest and resolves surface
+   `name`s; `isSurfaceAllowed()` is the pure allowlist filter. Any failure
+   degrades to `[]`, never throws.
+2. **surface-frame-sandbox** — `SurfaceFrame.tsx`: the single reusable, sandboxed
+   surface iframe; `SurfaceScreen.tsx` refactored to render it.
+3. **channel-app-tab** — `useChannelSurfaceTab.ts` (`resolveChannelSurfaceTab` +
+   the wiring hook) and `ChannelSurfacePane.tsx`: the channel-header app tab and
+   its allowlist-gated body.
+4. **channel-surface-picker** — `ChannelSurfacePicker.tsx`: the affordance in the
+   channel management sheet that sets/clears the channel→surface mapping.
+5. **surface-integration-gates** — these notes + the device-local guard test.
 
-- `pnpm --dir desktop typecheck` — green. The `.mjs` RED-baseline tests reference
-  not-yet-merged sibling modules, but `tsc` does not typecheck the `.mjs` test files,
-  so the missing imports do not break the typecheck gate.
-- `pnpm --dir desktop lint` — green (`biome lint .`, 1597 files).
-- `pnpm --dir desktop check` — green after the formatting deviation below.
-- `pnpm --dir desktop test` — the integration-guards suite for this track
-  (`surfaceIntegrationGuards.test.mjs`) is green. Sibling tracks' RED baselines
-  (`SurfaceFrame.render`, `surfaceDiscovery`, `ChannelSurfacePicker`,
-  `useChannelSurfaceTab`) remain red *in this isolated worktree only* because those
-  tracks' implementations live on their own branches and are not yet merged into this
-  base; they go green when the orchestrator merges those branches into the integration
-  branch. They are out of this track's scope (implementation-notes.md only) and are
-  owned by the parallel agents on those tracks. No previously-green test regressed.
-
-## Deviations
-
-- **Touched two out-of-primary-scope files to green the `check` gate.** The nominal
-  in-scope file for this track is `desktop/implementation-notes.md` only, but the
-  integration mandate is "fix any cross-task integration breakage so all gates are
-  green." Two already-merged sibling-track files failed `biome`'s formatter as
-  committed:
-  - `src/features/sidebar/lib/channelSurfaceStorage.ts` — `parseSurfacePayload`
-    signature should collapse onto one line.
-  - `src/testing/voxelboxSeed.ts` — a `systemPrompt` string literal should wrap.
-
-  These are formatter-only, non-behavioral changes — exactly what `pnpm format`
-  (the project's own sanctioned command) would apply — on files owned by no
-  currently-active agent (both tracks are already merged). Applied `biome format`
-  to those two files and nothing else. No logic changed.
-
-- **Did not implement any sibling-track source.** This track deliberately did *not*
-  create `SurfaceFrame.tsx`, `surfaceDiscovery.ts`, `ChannelSurfacePicker.tsx`, or
-  `useChannelSurfaceTab.ts` to make their RED baselines pass — those files belong to
-  parallel agents and creating them here would collide with concurrent work.
-
-## Surprises
-
-- **The `check` gate was already red on the base.** A surprise for an integration
-  pass: `voxelbox/agency-prototype` shipped two committed files that fail
-  `biome check`'s formatter. The lint gate (`biome lint`) passed while the combined
-  `check` (lint + format + custom checks) did not — the failures were formatting,
-  not lint rules. Worth catching earlier in each track's own gate run.
-- **`node_modules` is not shared into a fresh worktree.** Had to run
-  `pnpm install --frozen-lockfile` in the worktree before any gate would run; the pnpm
-  content-addressable store was warm so it was fast, but the step is required.
-- **The custom checks are source-oriented, not markdown-oriented.** `check:file-sizes`,
-  `check:px-text`, and `check:pubkey-truncation` did not flag this new markdown notes
-  file, which is the intended behavior.
-
-## Tradeoffs
-
-- **Applied the formatting fix here rather than deferring it to the owning tracks.**
-  Alternative was to leave `check` red and report it as pre-existing. Chose to fix it
-  because (a) the acceptance criteria require `check` green, (b) the change is
-  mechanical and idempotent so it cannot conflict at merge time, and (c) the whole
-  point of an integration pass is to leave the tree green. The cost is two files
-  touched beyond the primary scope, recorded here.
-- **Documented the iframe sandbox set from the pinned test contract, not from merged
-  source.** `SurfaceFrame.tsx` is not yet in this base, so the exact token string is
-  read from the `SurfaceFrame.render.test.mjs` contract and the security reasoning
-  below, rather than copied from shipped code. The integration branch should re-verify
-  the literal tokens once that track merges.
-
-## Spec gap
-
-- **The spec never named the exact iframe sandbox token set.** It said "sandboxed"
-  and "surfaces run JS and call their own API on :1337," but left the precise tokens
-  to the implementer. That is the gap this section closes (below). Feedback to the
-  brief author: pin the token set explicitly next time so every track agrees.
-- **The spec did not say who owns greening a gate that is already red on the shared
-  base.** This pass had to infer that the integration track owns mechanical cross-task
-  green-up. Worth stating in the brief.
-- **The spec did not specify a fallback surface base URL.** `SURFACE_BASE_URL` is
-  hardcoded to `http://localhost:1337/surfaces/`; whether that should be configurable
-  per environment is unspecified. Left as-is (out of scope), flagged here.
+The device-local mapping store (`channelSurfaceStorage.ts`) landed earlier on the
+base.
 
 ## Iframe sandbox attribute set + rationale
 
-**Chosen set: `sandbox="allow-scripts allow-same-origin"`** (retaining the existing
-`allow="clipboard-write; microphone"` attribute).
+**Chosen set: `sandbox="allow-scripts allow-same-origin"`** (retaining
+`allow="clipboard-write; microphone"`). Defined once in `SurfaceFrame.tsx` and
+exported (`SURFACE_SANDBOX`); `ChannelSurfacePane` renders `SurfaceFrame` so there
+is exactly one sandbox set in the tree.
 
-Rationale, token by token:
+- `allow-scripts` — required. Surfaces are voxelbox web apps that run their own
+  JS; without it the frame is inert.
+- `allow-same-origin` — required for a surface to reach its OWN API on
+  `http://localhost:1337`. A sandboxed frame without it is assigned an opaque
+  origin, which breaks credentialed fetch, cookies, and storage. Safe here
+  because the surface origin (`:1337`) is DIFFERENT from the desktop shell's
+  origin, so the well-known `allow-scripts` + `allow-same-origin` self-unsandbox
+  escape (which only applies when the frame is same-origin as its embedder) does
+  not apply. This origin-authority tradeoff is documented PRD policy.
+- **Deliberately withheld**: `allow-popups` and `allow-popups-to-escape-sandbox`
+  (a surface must never spawn a window that escapes this policy — this was the
+  security finding), `allow-top-navigation(-*)` (never navigate the host shell
+  out from under the user), and `allow-forms` / `allow-modals` / `allow-downloads`
+  (no shipped surface demonstrably needs native form submission, blocking
+  dialogs, or downloads; `allow-scripts` covers app I/O via fetch). Least
+  privilege: add the narrowest token later when a concrete surface needs it, not
+  pre-emptively.
 
-- `allow-scripts` — **required**. Surfaces are voxelbox web apps that run their own
-  JavaScript; without this token the framed surface renders inert. The frame test
-  (`SurfaceFrame.render.test.mjs`) mandates the sandbox set *permits scripts*, so this
-  token is non-negotiable.
-- `allow-same-origin` — **required for the surface to function**. Surfaces call their
-  own API on `http://localhost:1337`. Without `allow-same-origin`, a sandboxed iframe
-  is assigned a unique *opaque* origin, which blocks credentialed `fetch`, cookies,
-  `localStorage`, and IndexedDB — the surface's own API and storage would break. This
-  is safe here because the surface origin (`localhost:1337`) is **different** from the
-  desktop app shell's origin, so the well-known `allow-scripts` + `allow-same-origin`
-  self-unsandboxing escape (which only applies when the frame is *same-origin as its
-  embedder*) does not apply.
-- **Deliberately omitted**: `allow-top-navigation`, `allow-popups`,
-  `allow-popups-to-escape-sandbox`, `allow-modals`, `allow-forms`. Surfaces have no
-  need to navigate the host app, spawn popups, or drive top-level navigation; leaving
-  these off keeps the blast radius minimal. If a future surface needs forms or popups,
-  add the narrowest token then, not pre-emptively.
+`surfaceFrameSandbox.test.mjs` pins this set (asserts scripts + same-origin
+present, popups/escape/top-navigation absent) so it cannot silently regress.
 
-The `allow` attribute (`clipboard-write; microphone`) is orthogonal to `sandbox` — it
-governs Permissions-Policy delegation (clipboard, mic), not the sandbox flags — and is
-retained unchanged so existing surface capabilities do not regress.
+## Allowlist gate (never a raw iframe)
+
+`resolveChannelSurfaceTab(mappedSurface, installedSurfaces)` is the pure decision:
+no mapping → no tab; mapping present AND in discovery → `mode: "frame"`; mapping
+present but ABSENT from discovery → `mode: "empty"` (neutral empty state, NO
+iframe). A mapped name that daemon discovery doesn't vouch for can therefore never
+reach a live iframe. Discovery failure degrades to `[]`, so a dead daemon simply
+shows the empty state.
+
+## Stale-allowlist fix (review finding)
+
+The bug: the picker (writer) and the channel app tab (reader) are separate
+components. The tab read the mapping through a `useMemo` keyed only on
+`[pubkey, channelId]`, and `localStorage` writes are not reactive, so clearing a
+mapping in the picker (same channel still open) left a stale surface frame mounted
+— the frame persisted after the mapping was gone. The native `storage` event does
+not fire in the tab that made the write, so it could not close the gap.
+
+The fix, modeled on `selfProfileStorage.ts`:
+
+- `channelSurfaceStorage.ts` dispatches a `CHANNEL_SURFACE_CHANGE_EVENT` on every
+  successful set/clear and exposes `subscribeChannelSurface(listener)` (same-doc
+  change event + cross-tab `storage` event; returns an unsubscribe). The dispatch
+  is guarded so it never throws where `window` has no event surface (SSR, and the
+  `window = {}` test doubles).
+- `useChannelSurfaceTab` reads the mapping via `React.useSyncExternalStore(
+  subscribeChannelSurface, …)`, so a picker set/clear reactively flips the tab
+  between frame / empty / none — no stale iframe. It also re-validates discovery
+  whenever the mapping changes (not only on mount), so the allowlist result the
+  frame is gated on is fresh at the moment a surface is opened.
+- `ChannelSurfacePickerSection` reads its own selection through the same
+  subscription, so a clear made elsewhere reflects in the picker too.
+
+Coverage: `channelSurfaceStorage.reactivity.test.mjs` pins the event mechanism
+(fires on set/clear, re-read sees the change, unsubscribe stops it, no-op clear
+does not notify, guarded dispatch never throws). `channelSurfaceTabIntegration.
+test.mjs` exercises the real wiring end to end: picker write → change signal →
+tab resolve → pane render shows the frame; clear → tab drops the frame; a
+discovery stub gates the iframe; remapping swaps the frame URL.
 
 ## Device-local constraint — verified
 
-The channel→surface mapping is **device-local only**, by design. Verified across the
-whole branch:
+The channel→surface mapping is **device-local** only. Verified across every merged
+track: **no `*Surface*Sync.ts` companion** was added (contrast the syncing
+siblings `channelStarsSync` / `channelMutesSync` / `channelSectionsSync` /
+`channelSortSync`), and **no new Nostr kind / event** was introduced — the feature
+publishes nothing to a relay. The mapping lives solely in `channelSurfaceStorage`
+on `window.localStorage`, keyed per pubkey. `surfaceIntegrationGuards.test.mjs`
+enforces that no `*Surface*Sync.ts` exists under `src`. Reason it stays local: the
+relay whitelists event kinds and would reject a new one, so per-device
+`localStorage` is the correct home for this preference.
 
-- **No `*Sync.ts` companion was added.** There is intentionally no
-  `channelSurfaceSync.ts` (contrast its siblings `channelStarsSync.ts`,
-  `channelMutesSync.ts`, `channelSectionsSync.ts`, `channelSortSync.ts`, which *do*
-  sync). `git diff` against the base shows no `*Sync.tsx?` file added by this feature,
-  and `surfaceIntegrationGuards.test.mjs` enforces that no `*Surface*Sync.ts` exists
-  under `src`. The mapping lives solely in `channelSurfaceStorage.ts` on top of
-  `window.localStorage`, keyed per pubkey.
-- **No new Nostr kind was introduced.** The feature publishes no Nostr event —
-  no `signEvent`, no relay publish, no new `kind` literal anywhere in the diff. This
-  is the explicit reason the mapping is device-local: the relay whitelists event kinds
-  and would reject a new one, so per-device `localStorage` is the correct home for this
-  preference rather than a synced Nostr record.
+## Deviations (from the individual branches, applied during consolidation)
 
-Both halves of the device-local invariant (no sync file, no new kind) hold across every
-track merged into this branch.
+- **`ChannelSurfacePane` now renders the shared `SurfaceFrame`** instead of its own
+  inlined iframe + sandbox string. The app-tab branch inlined a copy because
+  `SurfaceFrame` did not yet exist on that branch; post-merge it does, so the copy
+  (and its divergent, looser sandbox set) was removed. One sandbox set now, not
+  three.
+- **Discovery is sourced from the shared `fetchInstalledSurfaces`** everywhere.
+  The picker and the tab hook each shipped their own inline `fetch` of the `:1337`
+  manifest; both were replaced with imports of `surfaceDiscovery.ts`. Three copies
+  of the discovery fetch collapsed to one.
+- **Sandbox set narrowed** from the frame branch's
+  `allow-scripts allow-same-origin allow-forms allow-popups
+  allow-popups-to-escape-sandbox allow-modals allow-downloads` to
+  `allow-scripts allow-same-origin` (see rationale above). The two branches
+  actually disagreed on the set in their own notes; the minimal set wins.
+- **Removed committed `.pnpm-store/v11/*` SQLite binaries** that rode in on the
+  discovery branch, and added a root-level `.pnpm-store/` gitignore rule (the
+  `desktop/.gitignore` already had one; the repo root did not).
+
+## Surprises
+
+- **Two branches were cut from the red baseline `ce6e8de9`, before the storage
+  file existed**, so their diffs against the current base appear to *delete*
+  `channelSurfaceStorage.ts`. A 3-way merge does not delete it (the file was added
+  on the base side only, unchanged on the branch side) — verified the file
+  survived each merge. A naive `diff`-driven read would have flagged a phantom
+  regression.
+- **The two branches' notes documented contradictory sandbox sets.** The app-tab
+  branch listed the broad set; the integration-gates branch had already argued for
+  minimal `allow-scripts allow-same-origin`. The consolidation reconciled them to
+  the minimal set.
+- **`ChannelScreen.tsx` sits under a file-size ratchet override**, not the raw
+  1000-line gate. The app-tab wiring ratcheted the override to 992 (still under
+  1000); the feature's logic lives in the hook + pane, not `ChannelScreen`. The
+  checker counts `wc -l + 1` (it counts the trailing newline segment).
+- **A fresh worktree has no `node_modules`.** `pnpm install` was required before
+  any gate would run.
+
+## Tradeoffs
+
+- **Discovery re-fetches on every mapping change**, not on a live daemon
+  subscription. This makes the allowlist fresh whenever a surface is opened
+  (bounded, deterministic, testable) without a polling loop. The residual edge —
+  a surface uninstalled from the daemon *while the same mapping stays open* —
+  is not observed live; opening/remapping re-validates. Acceptable for a
+  device-local preference; a push channel would be over-engineering here.
+- **Kept `allow-modals` / `allow-forms` / `allow-downloads` OFF** rather than
+  grandfathering the frame branch's broader set. Costs a future surface a
+  follow-up token grant if it genuinely needs one; buys a minimal blast radius
+  now. Least privilege chosen deliberately over convenience.
+- **The app tab is an in-view body swap in `ChannelScreen`, not a TanStack
+  route.** Routes are plugin-generated via `routes.ts`/`routeTree.gen.ts` and only
+  regenerate on dev-server restart, so an in-view swap is both lighter and more
+  correct. Activation state is ephemeral (resets on channel change) — the
+  device-local store is the only persisted state.
+
+## Spec gaps (feedback to the brief author)
+
+- **The brief never pinned the exact sandbox token set** — only "sandboxed" and
+  "surfaces run JS and call their own API on :1337." That ambiguity is exactly why
+  the parallel branches diverged (one broad, one minimal). Pin the token set
+  explicitly next time.
+- **The brief did not say the mapping needed a same-document reactive signal.**
+  The device-local store looked sufficient in isolation, but the picker/tab split
+  makes non-reactive reads a real staleness bug. Call out cross-component reactive
+  reads when a store is written by one component and read by another.
+- **No fallback/config for the surface base URL.** `http://localhost:1337/
+  surfaces/` is hardcoded; whether it should be environment-configurable is
+  unspecified. Left as-is, flagged here.
+
+## Cross-review log
+
+- **Adversarial review (codex) caught**: (1) the committed `.pnpm-store/v11/*`
+  SQLite binaries with no root gitignore rule; (2) the `SurfaceFrame` sandbox
+  granting `allow-popups-to-escape-sandbox` (frame-escape) plus `allow-popups`;
+  (3) the stale-allowlist bug — the channel surface iframe persisting after the
+  mapping was cleared or after discovery no longer listed the surface; (4) the
+  picker/app-tab tests being presentational-only, with no integration coverage of
+  the real picker→storage→tab wiring. All four fixed and covered by tests in this
+  pass.
