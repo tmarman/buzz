@@ -21,7 +21,7 @@ import {
   isSurfaceAllowed,
 } from "./surfaceDiscovery.ts";
 
-const DISCOVERY_URL = "http://localhost:1337/surfaces/";
+const DISCOVERY_URL = "http://localhost:1337/surfaces/?scope=global";
 
 function withFetch(handler, run) {
   const originalFetch = globalThis.fetch;
@@ -167,17 +167,47 @@ test("surface descriptors normalize explicit and legacy Space scope", async () =
   );
 });
 
+test("surface discovery sends the requested Space scope to the daemon", async () => {
+  await withFetch(
+    async (url) => {
+      assert.equal(
+        url,
+        "http://localhost:1337/surfaces/?scope=space%3Avoxelbox-ai",
+      );
+      return new Response(
+        JSON.stringify([{ name: "portfolio", org: "voxelbox-ai" }]),
+        { status: 200 },
+      );
+    },
+    async () => {
+      assert.deepEqual(
+        await fetchInstalledSurfaceDescriptors("space:voxelbox-ai"),
+        [
+          {
+            name: "portfolio",
+            space: "voxelbox-ai",
+            description: "",
+            ownerAgent: "",
+          },
+        ],
+      );
+    },
+  );
+});
+
 test("fetchInstalledSurfaces uses native IPC inside Tauri", async () => {
   const previousIsTauri = globalThis.isTauri;
   const previousWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
   let invokedCommand = null;
+  let invokedArgs = null;
 
   globalThis.isTauri = true;
   globalThis.window = {
     __TAURI_INTERNALS__: {
-      invoke(command) {
+      invoke(command, args) {
         invokedCommand = command;
+        invokedArgs = args;
         return Promise.resolve([
           {
             name: "control",
@@ -208,6 +238,7 @@ test("fetchInstalledSurfaces uses native IPC inside Tauri", async () => {
   try {
     assert.deepEqual(await fetchInstalledSurfaces(), ["control", "flow"]);
     assert.equal(invokedCommand, "discover_local_surfaces");
+    assert.deepEqual(invokedArgs, { scope: "global" });
   } finally {
     globalThis.isTauri = previousIsTauri;
     globalThis.window = previousWindow;

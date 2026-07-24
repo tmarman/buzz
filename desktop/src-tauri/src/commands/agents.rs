@@ -1030,6 +1030,7 @@ pub async fn create_managed_agent(
     Ok(CreateManagedAgentResponse {
         agent: final_agent,
         private_key_nsec,
+        owner_auth_tag: auth_tag,
         profile_sync_error,
         spawn_error,
     })

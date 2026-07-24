@@ -476,6 +476,7 @@ export type CreateManagedAgentInput = {
 export type CreateManagedAgentResponse = {
   agent: ManagedAgent;
   privateKeyNsec: string;
+  ownerAuthTag: string | null;
   profileSyncError: string | null;
   spawnError: string | null;
 };

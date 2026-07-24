@@ -708,6 +708,7 @@ pub fn run() {
             discover_local_surfaces,
             discover_voxelbox_agents,
             discover_voxelbox_spaces,
+            import_voxelbox_agent_identity,
             discover_acp_auth_methods,
             discover_acp_providers,
             discover_git_bash_prerequisite,

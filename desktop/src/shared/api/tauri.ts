@@ -160,6 +160,7 @@ export type RawManagedAgent = {
 type RawCreateManagedAgentResponse = {
   agent: RawManagedAgent;
   private_key_nsec: string;
+  owner_auth_tag?: string | null;
   profile_sync_error: string | null;
   spawn_error: string | null;
 };
@@ -874,6 +875,7 @@ export async function createManagedAgent(input: CreateManagedAgentInput) {
   return {
     agent: fromRawManagedAgent(response.agent),
     privateKeyNsec: response.private_key_nsec,
+    ownerAuthTag: response.owner_auth_tag ?? null,
     profileSyncError: response.profile_sync_error,
     spawnError: response.spawn_error,
   };

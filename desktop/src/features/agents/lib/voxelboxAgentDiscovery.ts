@@ -12,7 +12,15 @@ export type VoxelboxRemoteAgent = {
   avatarUrl: string | null;
   hasVoice: boolean;
   voiceDescription: string;
+  identityReady: boolean;
+  publicKey: string | null;
 };
+
+const HIDDEN_REMOTE_AGENT_NAMES = new Set(["liquid"]);
+
+export function shouldProjectVoxelboxAgent(name: string): boolean {
+  return !HIDDEN_REMOTE_AGENT_NAMES.has(name.trim().toLowerCase());
+}
 
 function normalizeVoxelboxAgents(agents: unknown): VoxelboxRemoteAgent[] {
   if (!Array.isArray(agents)) return [];
@@ -22,7 +30,7 @@ function normalizeVoxelboxAgents(agents: unknown): VoxelboxRemoteAgent[] {
 
     const source = agent as Record<string, unknown>;
     const name = typeof source.name === "string" ? source.name.trim() : "";
-    if (!name) return [];
+    if (!name || !shouldProjectVoxelboxAgent(name)) return [];
 
     const agentType =
       typeof source.agentType === "string"
@@ -42,6 +50,13 @@ function normalizeVoxelboxAgents(agents: unknown): VoxelboxRemoteAgent[] {
       typeof source.voiceDescription === "string"
         ? source.voiceDescription.trim()
         : "";
+    const identityReady = source.identityReady === true;
+    const publicKey =
+      typeof source.publicKey === "string" && source.publicKey.trim()
+        ? source.publicKey.trim().toLowerCase()
+        : typeof source.pubkey === "string" && source.pubkey.trim()
+          ? source.pubkey.trim().toLowerCase()
+          : null;
 
     return [
       {
@@ -52,9 +67,33 @@ function normalizeVoxelboxAgents(agents: unknown): VoxelboxRemoteAgent[] {
         avatarUrl,
         hasVoice,
         voiceDescription,
+        identityReady,
+        publicKey,
       },
     ];
   });
+}
+
+export type VoxelboxEnrollmentResult = {
+  steward: string;
+  npub: string;
+  pubkey: string;
+  state: "approved";
+};
+
+export async function importVoxelboxAgentIdentity(input: {
+  steward: string;
+  nsec: string;
+  ownerAuthTag: string;
+  replaceExisting: boolean;
+}): Promise<VoxelboxEnrollmentResult> {
+  if (!isTauri()) {
+    throw new Error("Joining a Voxelbox agent requires the native app.");
+  }
+  return invokeTauri<VoxelboxEnrollmentResult>(
+    "import_voxelbox_agent_identity",
+    input,
+  );
 }
 
 /**

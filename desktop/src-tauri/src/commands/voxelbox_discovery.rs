@@ -1,3 +1,5 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use nostr::Keys;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -8,6 +10,7 @@ use crate::app_state::AppState;
 const SURFACE_DISCOVERY_URL: &str = "http://localhost:1337/surfaces/";
 const SURFACE_HELLO_URL: &str = "http://localhost:1337/api/hello";
 const STEWARD_DISCOVERY_URL: &str = "http://localhost:1337/api/stewards";
+const AGENCY_ENROLLMENT_URL: &str = "http://localhost:1337/api/agency/enrollments";
 const SPACE_DISCOVERY_URL: &str = "http://localhost:1337/api/spaces";
 const SURFACE_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -71,6 +74,10 @@ pub struct VoxelboxAgentSummary {
     has_voice: bool,
     #[serde(default)]
     voice_description: String,
+    #[serde(default)]
+    identity_ready: bool,
+    #[serde(default)]
+    pubkey: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +85,15 @@ struct VoiceDesign {
     instruct: Option<String>,
     ref_text: Option<String>,
     seed_line: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoxelboxEnrollmentResult {
+    steward: String,
+    npub: String,
+    pubkey: String,
+    state: String,
 }
 
 /// Discover renderable surface descriptors through the native HTTP client.
@@ -90,10 +106,13 @@ struct VoiceDesign {
 #[tauri::command]
 pub async fn discover_local_surfaces(
     state: State<'_, AppState>,
+    scope: Option<String>,
 ) -> Result<Vec<LocalSurfaceDescriptor>, String> {
+    let scope = normalize_surface_scope(scope.as_deref())?;
     if let Ok(response) = state
         .http_client
         .post(SURFACE_HELLO_URL)
+        .query(&[("scope", scope.as_str())])
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .json(&serde_json::json!({
             "client_id": "buzz-alpha",
@@ -114,6 +133,7 @@ pub async fn discover_local_surfaces(
     let response = state
         .http_client
         .get(SURFACE_DISCOVERY_URL)
+        .query(&[("scope", scope.as_str())])
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .send()
         .await
@@ -198,6 +218,49 @@ pub async fn discover_voxelbox_agents(
         .collect())
 }
 
+/// Imports the Buzz-minted identity into a configured local steward.
+///
+/// The fixed loopback target keeps the nsec out of browser fetches and prevents
+/// this command from becoming an arbitrary native POST primitive.
+#[tauri::command]
+pub async fn import_voxelbox_agent_identity(
+    state: State<'_, AppState>,
+    steward: String,
+    nsec: String,
+    owner_auth_tag: String,
+    replace_existing: bool,
+) -> Result<VoxelboxEnrollmentResult, String> {
+    let owner_auth_tag = serde_json::from_str::<serde_json::Value>(&owner_auth_tag)
+        .map_err(|_| "owner auth tag is invalid".to_string())?;
+    let response = state
+        .http_client
+        .post(AGENCY_ENROLLMENT_URL)
+        .timeout(SURFACE_DISCOVERY_TIMEOUT)
+        .json(&serde_json::json!({
+            "steward": steward,
+            "nsec": nsec,
+            "ownerAuthTag": owner_auth_tag,
+            "replaceExisting": replace_existing,
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("Voxelbox enrollment failed: {error}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Voxelbox enrollment returned HTTP {status}: {}",
+            detail.trim()
+        ));
+    }
+
+    response
+        .json::<VoxelboxEnrollmentResult>()
+        .await
+        .map_err(|error| format!("Voxelbox enrollment response was invalid: {error}"))
+}
+
 fn installed_surface_descriptors(surfaces: Vec<InstalledSurface>) -> Vec<LocalSurfaceDescriptor> {
     surfaces
         .into_iter()
@@ -235,6 +298,20 @@ fn explicit_surface_space(space: &str) -> String {
     } else {
         space.to_string()
     }
+}
+
+fn normalize_surface_scope(scope: Option<&str>) -> Result<String, String> {
+    let scope = scope.unwrap_or("global").trim();
+    if scope == "global" {
+        return Ok(scope.to_string());
+    }
+    if let Some(space) = scope.strip_prefix("space:") {
+        let space = space.trim();
+        if !space.is_empty() {
+            return Ok(format!("space:{space}"));
+        }
+    }
+    Err("surface scope must be global or space:<id>".to_string())
 }
 
 fn voxelbox_space_summaries(spaces: Vec<VoxelboxSpaceSummary>) -> Vec<VoxelboxSpaceSummary> {
@@ -285,15 +362,26 @@ fn enrich_agent_identity(
         .join(&agent.name)
         .join("identity");
     if identity_dir.join("avatar.png").is_file() {
-        agent.avatar_url = Some(format!(
-            "http://localhost:1337/api/stewards/{}/avatar",
-            agent.name
-        ));
+        if let Ok(bytes) = std::fs::read(identity_dir.join("avatar.png")) {
+            agent.avatar_url = Some(format!(
+                "data:image/png;base64,{}",
+                BASE64_STANDARD.encode(bytes)
+            ));
+        }
     }
 
     if identity_dir.join("voice.wav").is_file() {
         agent.has_voice = true;
         agent.voice_description = voice_description(&identity_dir);
+    }
+    let nostr_dir = identity_dir.join("nostr");
+    if nostr_dir.join("credential").is_file() {
+        if let Ok(nsec) = std::fs::read_to_string(nostr_dir.join("nsec")) {
+            if let Ok(keys) = Keys::parse(nsec.trim()) {
+                agent.identity_ready = true;
+                agent.pubkey = Some(keys.public_key().to_hex());
+            }
+        }
     }
 
     agent
@@ -325,6 +413,7 @@ fn voice_description(identity_dir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr::ToBech32;
 
     #[test]
     fn installed_surfaces_default_legacy_entries_to_global() {
@@ -392,6 +481,17 @@ mod tests {
     }
 
     #[test]
+    fn surface_scope_defaults_to_global_and_rejects_invalid_values() {
+        assert_eq!(normalize_surface_scope(None).as_deref(), Ok("global"));
+        assert_eq!(
+            normalize_surface_scope(Some(" space:voxelbox-ai ")).as_deref(),
+            Ok("space:voxelbox-ai")
+        );
+        assert!(normalize_surface_scope(Some("space:")).is_err());
+        assert!(normalize_surface_scope(Some("voxelbox-ai")).is_err());
+    }
+
+    #[test]
     fn voxelbox_agent_summaries_drop_empty_names_and_trim_public_fields() {
         let agents = voxelbox_agent_summaries(vec![
             VoxelboxAgentSummary {
@@ -402,6 +502,8 @@ mod tests {
                 avatar_url: None,
                 has_voice: false,
                 voice_description: String::new(),
+                identity_ready: false,
+                pubkey: None,
             },
             VoxelboxAgentSummary {
                 name: " ".to_string(),
@@ -411,6 +513,8 @@ mod tests {
                 avatar_url: None,
                 has_voice: false,
                 voice_description: String::new(),
+                identity_ready: false,
+                pubkey: None,
             },
         ]);
 
@@ -428,6 +532,13 @@ mod tests {
         std::fs::create_dir_all(&identity_dir).expect("identity dir");
         std::fs::write(identity_dir.join("avatar.png"), b"png").expect("avatar");
         std::fs::write(identity_dir.join("voice.wav"), b"wav").expect("voice");
+        let nostr_dir = identity_dir.join("nostr");
+        std::fs::create_dir_all(&nostr_dir).expect("nostr dir");
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        std::fs::write(nostr_dir.join("nsec"), nsec).expect("nsec");
+        std::fs::write(nostr_dir.join("credential"), b"credential").expect("credential");
         std::fs::write(
             identity_dir.join("voice_design.json"),
             br#"{"instruct":"Calm, connective delivery"}"#,
@@ -443,15 +554,19 @@ mod tests {
                 avatar_url: None,
                 has_voice: false,
                 voice_description: String::new(),
+                identity_ready: false,
+                pubkey: None,
             },
             root.path(),
         );
 
         assert_eq!(
             agent.avatar_url.as_deref(),
-            Some("http://localhost:1337/api/stewards/weaver/avatar")
+            Some("data:image/png;base64,cG5n")
         );
         assert!(agent.has_voice);
+        assert!(agent.identity_ready);
+        assert_eq!(agent.pubkey.as_deref(), Some(pubkey.as_str()));
         assert_eq!(agent.voice_description, "Calm, connective delivery");
     }
 }

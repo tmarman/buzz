@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isVoxelboxAgentJoined,
   remoteAgentProjectNames,
   remoteAgentProvenanceLabel,
 } from "./RemoteAgentsSection.tsx";
@@ -83,5 +84,46 @@ test("remote agent projects include declared and observed participation", () => 
   assert.deepEqual(
     remoteAgentProjectNames(REMOTE_PUBKEY, projects, summaries),
     ["Declared", "Observed"],
+  );
+});
+
+test("Voxelbox participation is verified by public key with a legacy name fallback", () => {
+  const relayAgents = [
+    {
+      pubkey: "b".repeat(64),
+      name: "Smithy",
+      agentType: "managed",
+      channels: [],
+      channelIds: [],
+      capabilities: [],
+      status: "online",
+      respondTo: null,
+      respondToAllowlist: [],
+    },
+  ];
+  const base = {
+    name: "smithy",
+    agentType: "workspace-steward",
+    description: "Tools forge",
+    org: "voxelbox-ai",
+    avatarUrl: null,
+    hasVoice: false,
+    voiceDescription: "",
+    identityReady: true,
+  };
+
+  assert.equal(
+    isVoxelboxAgentJoined({ ...base, publicKey: "b".repeat(64) }, relayAgents),
+    true,
+  );
+  assert.equal(
+    isVoxelboxAgentJoined({ ...base, publicKey: "c".repeat(64) }, relayAgents),
+    false,
+  );
+  assert.equal(
+    isVoxelboxAgentJoined({ ...base, publicKey: null }, [
+      { ...relayAgents[0], agentType: "voxelbox" },
+    ]),
+    true,
   );
 });

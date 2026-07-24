@@ -181,8 +181,11 @@ export function ChannelSurfacePickerSection({
 
   React.useEffect(() => {
     let active = true;
+    const scope = selectedSpace
+      ? (`space:${selectedSpace}` as const)
+      : ("global" as const);
     void Promise.all([
-      fetchInstalledSurfaceDescriptors(),
+      fetchInstalledSurfaceDescriptors(scope),
       fetchVoxelboxSpaces(),
     ]).then(([descriptors, discoveredSpaces]) => {
       if (!active) return;
@@ -192,7 +195,7 @@ export function ChannelSurfacePickerSection({
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedSpace]);
 
   function handleToggle(name: string, selected: boolean) {
     if (selected) {

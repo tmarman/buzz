@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fetchVoxelboxRemoteAgents } from "./voxelboxAgentDiscovery.ts";
+import {
+  fetchVoxelboxRemoteAgents,
+  shouldProjectVoxelboxAgent,
+} from "./voxelboxAgentDiscovery.ts";
 
 test("Voxelbox browser discovery keeps only public agent summary fields", async () => {
   const originalFetch = globalThis.fetch;
@@ -31,6 +34,8 @@ test("Voxelbox browser discovery keeps only public agent summary fields", async 
         avatarUrl: null,
         hasVoice: false,
         voiceDescription: "",
+        identityReady: false,
+        publicKey: null,
       },
     ]);
   } finally {
@@ -55,9 +60,11 @@ test("Voxelbox native discovery uses the fixed IPC command", async () => {
             agentType: "workspace-steward",
             description: "Tools forge",
             org: "voxelbox-ai",
-            avatarUrl: "http://localhost:1337/api/stewards/smithy/avatar",
+            avatarUrl: "data:image/png;base64,cG5n",
             hasVoice: true,
             voiceDescription: "Measured and practical",
+            identityReady: true,
+            publicKey: "a".repeat(64),
           },
         ]);
       },
@@ -74,9 +81,11 @@ test("Voxelbox native discovery uses the fixed IPC command", async () => {
         agentType: "workspace-steward",
         description: "Tools forge",
         org: "voxelbox-ai",
-        avatarUrl: "http://localhost:1337/api/stewards/smithy/avatar",
+        avatarUrl: "data:image/png;base64,cG5n",
         hasVoice: true,
         voiceDescription: "Measured and practical",
+        identityReady: true,
+        publicKey: "a".repeat(64),
       },
     ]);
     assert.equal(invokedCommand, "discover_voxelbox_agents");
@@ -85,4 +94,10 @@ test("Voxelbox native discovery uses the fixed IPC command", async () => {
     globalThis.window = previousWindow;
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Liquid stays registered in Voxelbox but is not projected into Buzz", () => {
+  assert.equal(shouldProjectVoxelboxAgent("liquid"), false);
+  assert.equal(shouldProjectVoxelboxAgent(" Liquid "), false);
+  assert.equal(shouldProjectVoxelboxAgent("smithy"), true);
 });

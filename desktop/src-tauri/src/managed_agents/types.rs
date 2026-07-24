@@ -522,6 +522,7 @@ pub struct ManagedAgentSummary {
 pub struct CreateManagedAgentResponse {
     pub agent: ManagedAgentSummary,
     pub private_key_nsec: String,
+    pub owner_auth_tag: Option<String>,
     pub profile_sync_error: Option<String>,
     pub spawn_error: Option<String>,
 }

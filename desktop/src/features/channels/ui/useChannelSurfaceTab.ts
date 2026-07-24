@@ -112,13 +112,16 @@ export function useChannelSurfaceTab({
   // biome-ignore lint/correctness/useExhaustiveDependencies: mappedSurfaces is the intended re-fetch trigger (fresh allowlist when tabs change), not a value read in the effect body.
   React.useEffect(() => {
     let cancelled = false;
-    void fetchInstalledSurfaceDescriptors().then((descriptors) => {
+    const scope = selectedSpace
+      ? (`space:${selectedSpace}` as const)
+      : ("global" as const);
+    void fetchInstalledSurfaceDescriptors(scope).then((descriptors) => {
       if (!cancelled) setInstalledSurfaces(descriptors);
     });
     return () => {
       cancelled = true;
     };
-  }, [mappedSurfaces]);
+  }, [mappedSurfaces, selectedSpace]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset activation exactly when the active channel changes.
   React.useEffect(() => {

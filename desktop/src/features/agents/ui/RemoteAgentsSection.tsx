@@ -1,12 +1,21 @@
 import * as React from "react";
-import { Search } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Bot, Network, Search, Sparkles } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isTauri } from "@tauri-apps/api/core";
 
 import {
   fetchVoxelboxRemoteAgents,
+  importVoxelboxAgentIdentity,
   type VoxelboxRemoteAgent,
 } from "@/features/agents/lib/voxelboxAgentDiscovery";
+import {
+  managedAgentsQueryKey,
+  relayAgentsQueryKey,
+} from "@/features/agents/hooks";
+import { resolveManagedAgentAvatarUrl } from "@/features/agents/ui/managedAgentAvatar";
 import type { RelayAgent } from "@/shared/api/types";
+import { createManagedAgent, deleteManagedAgent } from "@/shared/api/tauri";
+import { startManagedAgent } from "@/shared/api/tauriManagedAgents";
 import { PresenceBadge } from "@/features/presence/ui/PresenceBadge";
 import {
   type Project,
@@ -18,6 +27,14 @@ import { useUserProfileQuery } from "@/features/profile/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelContext";
 import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { AgentIdentityCard } from "./AgentIdentityCard";
 
@@ -56,6 +73,25 @@ export function remoteAgentProjectNames(
     .sort((left, right) => left.localeCompare(right));
 }
 
+export function isVoxelboxAgentJoined(
+  agent: VoxelboxRemoteAgent,
+  relayAgents: readonly RelayAgent[],
+): boolean {
+  if (agent.publicKey) {
+    const publicKey = normalizePubkey(agent.publicKey);
+    return relayAgents.some(
+      (candidate) => normalizePubkey(candidate.pubkey) === publicKey,
+    );
+  }
+
+  const name = agent.name.trim().toLowerCase();
+  return relayAgents.some(
+    (candidate) =>
+      candidate.agentType.trim().toLowerCase() === "voxelbox" &&
+      candidate.name.trim().toLowerCase() === name,
+  );
+}
+
 export function RemoteAgentsSection({
   error,
   isLoading,
@@ -72,7 +108,11 @@ export function RemoteAgentsSection({
   ) => void;
   relayAgents: RelayAgent[];
 }) {
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [joinTarget, setJoinTarget] =
+    React.useState<VoxelboxRemoteAgent | null>(null);
+  const [joinNotice, setJoinNotice] = React.useState<string | null>(null);
   const normalizedManagedPubkeys = React.useMemo(
     () => new Set([...managedPubkeys].map(normalizePubkey)),
     [managedPubkeys],
@@ -96,24 +136,63 @@ export function RemoteAgentsSection({
     queryFn: fetchVoxelboxRemoteAgents,
     staleTime: 60_000,
   });
-  const joinedVoxelboxNames = React.useMemo(
-    () =>
-      new Set(
-        otherAgents
-          .filter(
-            (agent) => agent.agentType.trim().toLowerCase() === "voxelbox",
-          )
-          .map((agent) => agent.name.trim().toLowerCase()),
-      ),
-    [otherAgents],
-  );
   const availableVoxelboxAgents = React.useMemo(
     () =>
       (voxelboxAgentsQuery.data ?? [])
-        .filter((agent) => !joinedVoxelboxNames.has(agent.name.toLowerCase()))
+        .filter((agent) => !isVoxelboxAgentJoined(agent, otherAgents))
         .sort((left, right) => left.name.localeCompare(right.name)),
-    [joinedVoxelboxNames, voxelboxAgentsQuery.data],
+    [otherAgents, voxelboxAgentsQuery.data],
   );
+  const joinMutation = useMutation({
+    mutationFn: async (agent: VoxelboxRemoteAgent) => {
+      if (!isTauri()) {
+        throw new Error("Joining a Voxelbox agent requires the native app.");
+      }
+      const avatarUrl = await resolveManagedAgentAvatarUrl(agent.avatarUrl);
+      const created = await createManagedAgent({
+        name: agent.name,
+        acpCommand: "buzz-acp",
+        agentCommand: "voxelbox-agent",
+        harnessOverride: true,
+        systemPrompt: agent.description || undefined,
+        avatarUrl,
+        envVars: { VOXELBOX_STEWARD: agent.name },
+        spawnAfterCreate: false,
+        startOnAppLaunch: true,
+        backend: { type: "local" },
+        respondTo: "owner-only",
+      });
+
+      try {
+        if (!created.ownerAuthTag) {
+          throw new Error("Buzz did not return an owner attestation.");
+        }
+        await importVoxelboxAgentIdentity({
+          steward: agent.name,
+          nsec: created.privateKeyNsec,
+          ownerAuthTag: created.ownerAuthTag,
+          replaceExisting: agent.identityReady,
+        });
+      } catch (error) {
+        await deleteManagedAgent(created.agent.pubkey, true).catch(() => {});
+        throw error;
+      }
+
+      await startManagedAgent(created.agent.pubkey);
+      return created.agent;
+    },
+    onSuccess: async (agent) => {
+      setJoinNotice(`${agent.name} joined and is starting.`);
+      setJoinTarget(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),
+        queryClient.invalidateQueries({
+          queryKey: ["voxelbox-remote-agents"],
+        }),
+      ]);
+    },
+  });
 
   const filteredAgents = React.useMemo(() => {
     if (!searchQuery.trim()) return otherAgents;
@@ -203,6 +282,11 @@ export function RemoteAgentsSection({
             <AvailableVoxelboxAgentCard
               agent={agent}
               key={`${agent.org}:${agent.name}`}
+              onJoin={() => {
+                joinMutation.reset();
+                setJoinNotice(null);
+                setJoinTarget(agent);
+              }}
             />
           ))}
         </div>
@@ -219,6 +303,82 @@ export function RemoteAgentsSection({
           {error.message}
         </p>
       ) : null}
+
+      {joinNotice ? (
+        <p className="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">
+          {joinNotice}
+        </p>
+      ) : null}
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open && !joinMutation.isPending) setJoinTarget(null);
+        }}
+        open={joinTarget !== null}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              Join {joinTarget?.name ?? "Voxelbox agent"}
+            </DialogTitle>
+            <DialogDescription>
+              Buzz will create an owner-attested community identity, bind it to
+              this Voxelbox agent, and start its local runtime.
+            </DialogDescription>
+          </DialogHeader>
+
+          {joinTarget ? (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-border/70 bg-muted/25 p-4">
+                <p className="font-medium">{joinTarget.name}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {joinTarget.description ||
+                    remoteAgentProvenanceLabel(joinTarget.agentType)}
+                </p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Initially responds only to you. Channel participation can be
+                  granted after enrollment.
+                </p>
+              </div>
+
+              {joinTarget.identityReady ? (
+                <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-warning">
+                  This agent already has a local Buzz identity. Joining replaces
+                  it with the identity for this community; Foundry preserves a
+                  restricted backup for recovery.
+                </p>
+              ) : null}
+
+              {joinMutation.error instanceof Error ? (
+                <p
+                  className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+                  role="alert"
+                >
+                  {joinMutation.error.message}
+                </p>
+              ) : null}
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  disabled={joinMutation.isPending}
+                  onClick={() => setJoinTarget(null)}
+                  type="button"
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={joinMutation.isPending}
+                  onClick={() => joinMutation.mutate(joinTarget)}
+                  type="button"
+                >
+                  {joinMutation.isPending ? "Joining…" : "Join agent"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
@@ -276,10 +436,33 @@ function RemoteAgentCard({
   );
 }
 
-function AvailableVoxelboxAgentCard({ agent }: { agent: VoxelboxRemoteAgent }) {
+function AvailableVoxelboxAgentCard({
+  agent,
+  onJoin,
+}: {
+  agent: VoxelboxRemoteAgent;
+  onJoin: () => void;
+}) {
   return (
     <AgentIdentityCard
-      ariaLabel={`${agent.name} is available from Voxelbox but has not joined this community`}
+      actions={
+        <Button
+          aria-label={`Join ${agent.name}`}
+          className="pointer-events-auto h-7 px-2 text-xs"
+          onClick={onJoin}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          Join
+        </Button>
+      }
+      ariaLabel={`${agent.name} is available from Voxelbox`}
+      avatar={
+        agent.avatarUrl ? undefined : (
+          <VoxelboxAgentFallbackIcon agentType={agent.agentType} />
+        )
+      }
       avatarUrl={agent.avatarUrl}
       dataTestId={`available-voxelbox-agent-${agent.name}`}
       description={agent.description}
@@ -289,7 +472,9 @@ function AvailableVoxelboxAgentCard({ agent }: { agent: VoxelboxRemoteAgent }) {
         .replace(/\b\w/g, (character) => character.toUpperCase())}`}
       statusBadge={
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-          <Badge variant="outline">Not joined</Badge>
+          <Badge variant="outline">
+            {agent.identityReady ? "Local identity" : "Available"}
+          </Badge>
           {agent.hasVoice ? (
             <Badge
               title={agent.voiceDescription || "Voice profile available"}
@@ -310,5 +495,21 @@ function AvailableVoxelboxAgentCard({ agent }: { agent: VoxelboxRemoteAgent }) {
         </div>
       }
     />
+  );
+}
+
+function VoxelboxAgentFallbackIcon({ agentType }: { agentType: string }) {
+  const normalizedType = agentType.trim().toLowerCase();
+  const Icon =
+    normalizedType === "orchestrator"
+      ? Network
+      : normalizedType.includes("autonomous")
+        ? Sparkles
+        : Bot;
+
+  return (
+    <div className="flex h-24 w-24 items-center justify-center rounded-full border-[3px] border-background bg-primary/15 text-primary">
+      <Icon className="h-10 w-10" />
+    </div>
   );
 }

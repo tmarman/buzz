@@ -5,6 +5,8 @@ import { invokeTauri } from "@/shared/api/tauri";
 const SURFACE_DISCOVERY_URL = "http://localhost:1337/surfaces/";
 const SPACE_DISCOVERY_URL = "http://localhost:1337/api/spaces";
 
+export type SurfaceDiscoveryScope = "global" | `space:${string}`;
+
 export type InstalledSurfaceDescriptor = {
   name: string;
   space: string;
@@ -73,14 +75,24 @@ function normalizeSurfaceDescriptors(
  */
 export async function fetchInstalledSurfaceDescriptors(): Promise<
   InstalledSurfaceDescriptor[]
-> {
+>;
+export async function fetchInstalledSurfaceDescriptors(
+  scope: SurfaceDiscoveryScope,
+): Promise<InstalledSurfaceDescriptor[]>;
+export async function fetchInstalledSurfaceDescriptors(
+  scope: SurfaceDiscoveryScope = "global",
+): Promise<InstalledSurfaceDescriptor[]> {
   try {
     if (isTauri()) {
-      const surfaces = await invokeTauri<unknown>("discover_local_surfaces");
+      const surfaces = await invokeTauri<unknown>("discover_local_surfaces", {
+        scope,
+      });
       return normalizeSurfaceDescriptors(surfaces);
     }
 
-    const response = await fetch(SURFACE_DISCOVERY_URL);
+    const discoveryUrl = new URL(SURFACE_DISCOVERY_URL);
+    discoveryUrl.searchParams.set("scope", scope);
+    const response = await fetch(discoveryUrl.toString());
     if (!response.ok) {
       return [];
     }
@@ -93,8 +105,10 @@ export async function fetchInstalledSurfaceDescriptors(): Promise<
 }
 
 /** Backward-compatible name allowlist used by the surface pane. */
-export async function fetchInstalledSurfaces(): Promise<string[]> {
-  return (await fetchInstalledSurfaceDescriptors()).map(
+export async function fetchInstalledSurfaces(
+  scope: SurfaceDiscoveryScope = "global",
+): Promise<string[]> {
+  return (await fetchInstalledSurfaceDescriptors(scope)).map(
     (surface) => surface.name,
   );
 }
