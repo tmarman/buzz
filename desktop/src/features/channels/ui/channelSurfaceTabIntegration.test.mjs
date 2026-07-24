@@ -13,18 +13,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 // stale-allowlist fix (a clear must drop the frame) and the discovery gate
 // (only discovered surfaces reach a live iframe).
 import {
-  clearChannelSurface,
-  getChannelSurface,
-  setChannelSurface,
+  addChannelSurface,
+  getChannelSurfaces,
+  removeChannelSurface,
   subscribeChannelSurface,
 } from "@/features/sidebar/lib/channelSurfaceStorage";
 import { fetchInstalledSurfaces } from "@/features/surfaces/lib/surfaceDiscovery";
 import { ChannelSurfacePane } from "./ChannelSurfacePane.tsx";
-import { resolveChannelSurfaceTab } from "./useChannelSurfaceTab.ts";
+import { resolveChannelSurfaceTabs } from "./useChannelSurfaceTab.ts";
 
 const PUBKEY = "a".repeat(64);
 const CHANNEL = "chan-1";
-const DISCOVERY = ["agency", "notebook"];
+const descriptor = (name) => ({
+  name,
+  space: "global",
+  description: "",
+  ownerAgent: "",
+});
+const DISCOVERY = [descriptor("agency"), descriptor("notebook")];
 
 // EventTarget-backed window so the storage change event fires listeners — this
 // is what makes the tab recompute reactively (what useSyncExternalStore does in
@@ -49,15 +55,17 @@ function installReactiveWindow() {
 // Mirrors the reactive read useChannelSurfaceTab performs: recompute the tab
 // state from the (re-read) mapping on every storage change signal.
 function mountTab(discovery) {
-  let state = resolveChannelSurfaceTab(
-    getChannelSurface(PUBKEY, CHANNEL),
-    discovery,
-  );
-  const unsub = subscribeChannelSurface(() => {
-    state = resolveChannelSurfaceTab(
-      getChannelSurface(PUBKEY, CHANNEL),
+  let state =
+    resolveChannelSurfaceTabs(
+      getChannelSurfaces(PUBKEY, CHANNEL),
       discovery,
-    );
+    )[0] ?? null;
+  const unsub = subscribeChannelSurface(() => {
+    state =
+      resolveChannelSurfaceTabs(
+        getChannelSurfaces(PUBKEY, CHANNEL),
+        discovery,
+      )[0] ?? null;
   });
   return {
     get state() {
@@ -68,18 +76,20 @@ function mountTab(discovery) {
 }
 
 const paneHtml = (state) =>
-  renderToStaticMarkup(React.createElement(ChannelSurfacePane, { state }));
+  state
+    ? renderToStaticMarkup(React.createElement(ChannelSurfacePane, { state }))
+    : "";
 
 test("picker select → storage write → tab shows the sandboxed frame", () => {
   installReactiveWindow();
   const tab = mountTab(DISCOVERY);
-  assert.equal(tab.state.showTab, false, "no tab before any mapping");
+  assert.equal(tab.state, null, "no tab before any mapping");
 
   // The exact call ChannelSurfacePickerSection.handleSelect makes.
-  setChannelSurface(PUBKEY, CHANNEL, "agency");
+  addChannelSurface(PUBKEY, CHANNEL, "agency");
 
   assert.deepEqual(tab.state, {
-    showTab: true,
+    descriptor: descriptor("agency"),
     mode: "frame",
     surface: "agency",
   });
@@ -95,14 +105,14 @@ test("picker select → storage write → tab shows the sandboxed frame", () => 
 
 test("picker clear → tab drops the frame (stale-allowlist fix)", () => {
   installReactiveWindow();
-  setChannelSurface(PUBKEY, CHANNEL, "agency");
+  addChannelSurface(PUBKEY, CHANNEL, "agency");
   const tab = mountTab(DISCOVERY);
   assert.equal(tab.state.mode, "frame", "frame present before clear");
 
   // The exact call ChannelSurfacePickerSection.handleClear makes.
-  clearChannelSurface(PUBKEY, CHANNEL);
+  removeChannelSurface(PUBKEY, CHANNEL, "agency");
 
-  assert.deepEqual(tab.state, { showTab: false, mode: "none" });
+  assert.equal(tab.state, null);
   assert.ok(
     !paneHtml(tab.state).includes("<iframe"),
     "a cleared mapping must not leave a live iframe",
@@ -119,11 +129,15 @@ test("discovery stub gates iframe rendering: only discovered surfaces get a fram
     const installed = await fetchInstalledSurfaces();
     assert.deepEqual(installed, ["agency"]);
 
-    const discovered = resolveChannelSurfaceTab("agency", installed);
+    const descriptors = installed.map(descriptor);
+    const discovered = resolveChannelSurfaceTabs(["agency"], descriptors)[0];
     assert.equal(discovered.mode, "frame");
     assert.ok(paneHtml(discovered).includes("<iframe"));
 
-    const undiscovered = resolveChannelSurfaceTab("notebook", installed);
+    const undiscovered = resolveChannelSurfaceTabs(
+      ["notebook"],
+      descriptors,
+    )[0];
     assert.equal(undiscovered.mode, "empty");
     assert.ok(
       !paneHtml(undiscovered).includes("<iframe"),
@@ -136,11 +150,12 @@ test("discovery stub gates iframe rendering: only discovered surfaces get a fram
 
 test("remapping to a different surface reactively swaps the frame URL", () => {
   installReactiveWindow();
-  setChannelSurface(PUBKEY, CHANNEL, "agency");
+  addChannelSurface(PUBKEY, CHANNEL, "agency");
   const tab = mountTab(DISCOVERY);
   assert.ok(paneHtml(tab.state).includes("/surfaces/agency/"));
 
-  setChannelSurface(PUBKEY, CHANNEL, "notebook");
+  removeChannelSurface(PUBKEY, CHANNEL, "agency");
+  addChannelSurface(PUBKEY, CHANNEL, "notebook");
   assert.equal(tab.state.surface, "notebook");
   assert.ok(paneHtml(tab.state).includes("/surfaces/notebook/"));
   tab.unsub();

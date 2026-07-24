@@ -21,58 +21,69 @@ import { renderToStaticMarkup } from "react-dom/server";
 //   ChannelSurfacePane({ state }) renders:
 //     mode "frame" -> the sandboxed SurfaceFrame (an <iframe> at the mapped URL)
 //     mode "empty" -> a neutral empty state with NO <iframe>
-import { resolveChannelSurfaceTab } from "./useChannelSurfaceTab.ts";
+import { resolveChannelSurfaceTabs } from "./useChannelSurfaceTab.ts";
 import { ChannelSurfacePane } from "./ChannelSurfacePane.tsx";
 
-const INSTALLED = ["agency", "notebook"];
+const descriptor = (name) => ({
+  name,
+  space: "global",
+  description: "",
+  ownerAgent: "",
+});
+const INSTALLED = [descriptor("agency"), descriptor("notebook")];
 
 // ── resolveChannelSurfaceTab ──────────────────────────────────────────────────
 
-test("no mapping → no tab", () => {
-  assert.deepEqual(resolveChannelSurfaceTab(null, INSTALLED), {
-    showTab: false,
-    mode: "none",
-  });
-  assert.deepEqual(resolveChannelSurfaceTab(undefined, INSTALLED), {
-    showTab: false,
-    mode: "none",
-  });
-  assert.deepEqual(resolveChannelSurfaceTab("", INSTALLED), {
-    showTab: false,
-    mode: "none",
-  });
+test("no mapping → no app tabs", () => {
+  assert.deepEqual(resolveChannelSurfaceTabs([], INSTALLED), []);
 });
 
-test("mapping present and in discovery → tab shows a frame", () => {
-  assert.deepEqual(resolveChannelSurfaceTab("agency", INSTALLED), {
-    showTab: true,
-    mode: "frame",
-    surface: "agency",
-  });
+test("mappings preserve order and discovered tabs show frames", () => {
+  assert.deepEqual(
+    resolveChannelSurfaceTabs(["notebook", "agency"], INSTALLED),
+    [
+      {
+        mode: "frame",
+        surface: "notebook",
+        descriptor: descriptor("notebook"),
+      },
+      {
+        mode: "frame",
+        surface: "agency",
+        descriptor: descriptor("agency"),
+      },
+    ],
+  );
 });
 
 test("mapping present but absent from discovery → tab shows empty state (allowlist gate)", () => {
-  assert.deepEqual(resolveChannelSurfaceTab("ghost", INSTALLED), {
-    showTab: true,
-    mode: "empty",
-    surface: "ghost",
-  });
+  assert.deepEqual(resolveChannelSurfaceTabs(["ghost"], INSTALLED), [
+    {
+      descriptor: null,
+      mode: "empty",
+      surface: "ghost",
+    },
+  ]);
 });
 
 test("mapping present with empty discovery → empty state, never a frame", () => {
-  assert.deepEqual(resolveChannelSurfaceTab("agency", []), {
-    showTab: true,
-    mode: "empty",
-    surface: "agency",
-  });
+  assert.deepEqual(resolveChannelSurfaceTabs(["agency"], []), [
+    {
+      descriptor: null,
+      mode: "empty",
+      surface: "agency",
+    },
+  ]);
 });
-
-// ── ChannelSurfacePane render ─────────────────────────────────────────────────
 
 test("ChannelSurfacePane renders the sandboxed frame when mode is frame", () => {
   const html = renderToStaticMarkup(
     React.createElement(ChannelSurfacePane, {
-      state: { showTab: true, mode: "frame", surface: "agency" },
+      state: {
+        descriptor: descriptor("agency"),
+        mode: "frame",
+        surface: "agency",
+      },
     }),
   );
   assert.ok(html.includes("<iframe"), "frame mode should render an iframe");
@@ -90,7 +101,7 @@ test("ChannelSurfacePane renders the sandboxed frame when mode is frame", () => 
 test("ChannelSurfacePane renders a neutral empty state with NO iframe when mode is empty", () => {
   const html = renderToStaticMarkup(
     React.createElement(ChannelSurfacePane, {
-      state: { showTab: true, mode: "empty", surface: "ghost" },
+      state: { descriptor: null, mode: "empty", surface: "ghost" },
     }),
   );
   assert.ok(

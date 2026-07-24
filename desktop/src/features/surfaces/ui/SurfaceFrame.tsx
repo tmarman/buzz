@@ -1,3 +1,7 @@
+import * as React from "react";
+
+import { postSurfaceHostTheme } from "@/features/surfaces/lib/surfaceHostBridge";
+
 export const SURFACE_BASE_URL = "http://localhost:1337/surfaces/";
 
 // Sandbox set for a first-party, locally-served surface loaded cross-origin
@@ -24,12 +28,27 @@ export const SURFACE_BASE_URL = "http://localhost:1337/surfaces/";
 export const SURFACE_SANDBOX = "allow-scripts allow-same-origin";
 
 export function SurfaceFrame({ name }: { name: string }) {
+  const frameRef = React.useRef<HTMLIFrameElement>(null);
   const src = `${SURFACE_BASE_URL}${encodeURIComponent(name)}/`;
+
+  React.useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      postSurfaceHostTheme(frameRef.current);
+    });
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <iframe
       allow="clipboard-write; microphone"
       className="min-h-0 w-full flex-1 border-0"
+      onLoad={() => postSurfaceHostTheme(frameRef.current)}
+      ref={frameRef}
       sandbox={SURFACE_SANDBOX}
       src={src}
       title={name}

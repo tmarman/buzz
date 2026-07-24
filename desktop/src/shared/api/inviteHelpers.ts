@@ -3,7 +3,7 @@ export const INVITE_EXPIRED_ERROR = "invite_expired";
 /**
  * Parsed invite — either a full (relay + code) or bare-code form.
  *
- * URL inputs (`https://`, `http://`, `buzz://join`) always carry a
+ * URL inputs (`https://`, `http://`, `buzz://join`, `buzz-alpha://join`) carry a
  * `relayWsUrl` (already normalised to `ws(s)://`).  A bare code (no scheme,
  * no slashes) omits it — the caller decides which relay to target.
  */
@@ -17,7 +17,7 @@ export type ParsedInvite =
  * Accepted input forms:
  *  - `https://<relay>/invite/<code>` → `{ relayWsUrl: "wss://<relay>", code }`
  *  - `http://<relay>/invite/<code>`  → `{ relayWsUrl: "ws://<relay>", code }`
- *  - `buzz://join?relay=<wsUrl>&code=<code>` → `{ relayWsUrl, code }`
+ *  - `buzz[-alpha]://join?relay=<wsUrl>&code=<code>` → `{ relayWsUrl, code }`
  *  - bare code (no `://`, no `/`)    → `{ code }`
  *
  * Returns `null` for empty input or inputs that don't match any form.
@@ -30,9 +30,9 @@ export function parseInviteInput(input: string): ParsedInvite | null {
   try {
     const url = new URL(trimmed);
 
-    // buzz://join?relay=...&code=...
+    // buzz://join?relay=...&code=... (or the isolated Alpha scheme)
     // Non-special schemes put the authority in `host`, not `pathname`.
-    if (url.protocol === "buzz:") {
+    if (url.protocol === "buzz:" || url.protocol === "buzz-alpha:") {
       if (url.host !== "join") return null;
       const relay = url.searchParams.get("relay");
       const code = url.searchParams.get("code");

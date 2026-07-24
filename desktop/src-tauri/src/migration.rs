@@ -22,6 +22,7 @@ use tauri::Manager;
 use crate::util::replace_with_symlink;
 
 const CANONICAL_DEV_IDENTIFIER: &str = "xyz.block.buzz.app.dev";
+const ALPHA_IDENTIFIER: &str = "com.voxelbox.Buzz";
 const LEGACY_CANONICAL_DEV_IDENTIFIER: &str = "xyz.block.sprout.app.dev";
 const LEGACY_RELEASE_IDENTIFIER: &str = "xyz.block.sprout.app";
 
@@ -50,6 +51,10 @@ pub(crate) fn is_dev_data_dir_name(name: &str) -> bool {
         || name
             .strip_prefix(CANONICAL_DEV_IDENTIFIER)
             .is_some_and(|rest| rest.starts_with('.'))
+}
+
+pub(crate) fn is_alpha_data_dir_name(name: &str) -> bool {
+    name == ALPHA_IDENTIFIER
 }
 
 fn canonical_dev_data_dir(current: &Path) -> Option<PathBuf> {
@@ -134,11 +139,12 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     // pattern used by reconcile_target_dir: dev instances have an app-data-dir
     // name starting with CANONICAL_DEV_IDENTIFIER.
     let is_dev = if let Ok(data_dir) = app.path().app_data_dir() {
-        let dev = data_dir
+        let name = data_dir
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(is_dev_data_dir_name);
-        crate::managed_agents::init_nest_dir(dev);
+            .unwrap_or_default();
+        let dev = is_dev_data_dir_name(name);
+        crate::managed_agents::init_nest_dir(dev, is_alpha_data_dir_name(name));
         dev
     } else {
         false

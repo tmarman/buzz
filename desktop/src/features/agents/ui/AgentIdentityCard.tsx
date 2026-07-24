@@ -10,9 +10,10 @@ type AgentIdentityCardProps = {
   avatar?: ReactNode;
   avatarUrl?: string | null;
   dataTestId: string;
+  description?: string | null;
   label: string;
   modelLabel?: string | null;
-  onClick: () => void;
+  onClick?: () => void;
   /** Optional badge rendered below the label (e.g. "Restart required"). */
   statusBadge?: ReactNode;
 };
@@ -23,6 +24,7 @@ export function AgentIdentityCard({
   avatar,
   avatarUrl,
   dataTestId,
+  description,
   label,
   modelLabel,
   onClick,
@@ -37,12 +39,14 @@ export function AgentIdentityCard({
       )}
       data-testid={dataTestId}
     >
-      <button
-        aria-label={ariaLabel}
-        className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={onClick}
-        type="button"
-      />
+      {onClick ? (
+        <button
+          aria-label={ariaLabel}
+          className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onClick}
+          type="button"
+        />
+      ) : null}
 
       <div className="pointer-events-none relative z-20 flex h-full w-full min-w-0 flex-col items-center justify-center gap-5 px-4 pb-12 text-center">
         <div className="flex h-24 w-24 items-center justify-center">
@@ -75,6 +79,11 @@ export function AgentIdentityCard({
         {modelLabel ? (
           <span className="min-w-0 truncate text-xs font-normal text-secondary-foreground/75">
             {modelLabel}
+          </span>
+        ) : null}
+        {description ? (
+          <span className="line-clamp-2 min-w-0 text-xs font-normal leading-4 text-muted-foreground">
+            {description}
           </span>
         ) : null}
         {statusBadge}

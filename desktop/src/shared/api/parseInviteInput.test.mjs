@@ -80,6 +80,16 @@ test("parseInviteInput_buzz_join_with_ws_relay_returns_relay_and_code", () => {
   });
 });
 
+test("parseInviteInput_buzz_alpha_join_returns_relay_and_code", () => {
+  const result = parseInviteInput(
+    "buzz-alpha://join?relay=wss://relay.example.com&code=abc123",
+  );
+  assert.deepEqual(result, {
+    relayWsUrl: "wss://relay.example.com",
+    code: "abc123",
+  });
+});
+
 test("parseInviteInput_buzz_join_with_encoded_relay_param", () => {
   const result = parseInviteInput(
     "buzz://join?relay=wss%3A%2F%2Frelay.example.com&code=abc123",

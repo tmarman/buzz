@@ -12,12 +12,12 @@ const STORAGE_KEY_PREFIX = "buzz-channel-surfaces.v1";
 export const CHANNEL_SURFACE_CHANGE_EVENT = "buzz:channel-surface-change";
 
 export type ChannelSurfaceStore = {
-  version: 1;
-  channels: Record<string, string>;
+  version: 2;
+  channels: Record<string, string[]>;
 };
 
 export const DEFAULT_STORE: ChannelSurfaceStore = Object.freeze({
-  version: 1,
+  version: 2,
   channels: {},
 });
 
@@ -28,18 +28,34 @@ export function storageKey(pubkey: string): string {
 export function parseSurfacePayload(json: unknown): ChannelSurfaceStore | null {
   if (typeof json !== "object" || json === null) return null;
   const obj = json as Record<string, unknown>;
-  if (obj.version !== 1) return null;
-  const channels: Record<string, string> =
-    typeof obj.channels === "object" &&
-    obj.channels !== null &&
-    !Array.isArray(obj.channels)
-      ? Object.fromEntries(
-          Object.entries(obj.channels as Record<string, unknown>).filter(
-            (entry): entry is [string, string] => typeof entry[1] === "string",
-          ),
-        )
-      : {};
-  return { version: 1, channels };
+  if (obj.version !== 1 && obj.version !== 2) return null;
+  if (
+    typeof obj.channels !== "object" ||
+    obj.channels === null ||
+    Array.isArray(obj.channels)
+  ) {
+    return DEFAULT_STORE;
+  }
+
+  const channels = Object.fromEntries(
+    Object.entries(obj.channels as Record<string, unknown>).flatMap(
+      ([channelId, value]) => {
+        const surfaces =
+          typeof value === "string"
+            ? [value]
+            : Array.isArray(value)
+              ? value.filter(
+                  (surface): surface is string => typeof surface === "string",
+                )
+              : [];
+        const normalized = [
+          ...new Set(surfaces.map((surface) => surface.trim()).filter(Boolean)),
+        ];
+        return normalized.length > 0 ? [[channelId, normalized]] : [];
+      },
+    ),
+  );
+  return { version: 2, channels };
 }
 
 function readChannelSurfaceStore(pubkey: string): ChannelSurfaceStore {
@@ -108,10 +124,18 @@ export function getChannelSurface(
   pubkey: string,
   channelId: string,
 ): string | undefined {
-  const channels = readChannelSurfaceStore(pubkey).channels;
-  return Object.hasOwn(channels, channelId) ? channels[channelId] : undefined;
+  return getChannelSurfaces(pubkey, channelId)[0];
 }
 
+export function getChannelSurfaces(
+  pubkey: string,
+  channelId: string,
+): string[] {
+  const channels = readChannelSurfaceStore(pubkey).channels;
+  return Object.hasOwn(channels, channelId) ? [...channels[channelId]] : [];
+}
+
+/** Legacy single-selection setter. Replaces the channel's pinned tabs. */
 export function setChannelSurface(
   pubkey: string,
   channelId: string,
@@ -119,8 +143,43 @@ export function setChannelSurface(
 ): boolean {
   const store = readChannelSurfaceStore(pubkey);
   return writeChannelSurfaceStore(pubkey, {
-    version: 1,
-    channels: { ...store.channels, [channelId]: surfaceName },
+    version: 2,
+    channels: { ...store.channels, [channelId]: [surfaceName] },
+  });
+}
+
+export function addChannelSurface(
+  pubkey: string,
+  channelId: string,
+  surfaceName: string,
+): boolean {
+  const name = surfaceName.trim();
+  if (!name) return false;
+  const store = readChannelSurfaceStore(pubkey);
+  const current = store.channels[channelId] ?? [];
+  if (current.includes(name)) return true;
+  return writeChannelSurfaceStore(pubkey, {
+    version: 2,
+    channels: { ...store.channels, [channelId]: [...current, name] },
+  });
+}
+
+export function removeChannelSurface(
+  pubkey: string,
+  channelId: string,
+  surfaceName: string,
+): boolean {
+  const store = readChannelSurfaceStore(pubkey);
+  const current = store.channels[channelId] ?? [];
+  const next = current.filter((name) => name !== surfaceName);
+  if (next.length === current.length) return true;
+  if (next.length === 0) {
+    const { [channelId]: _, ...channels } = store.channels;
+    return writeChannelSurfaceStore(pubkey, { version: 2, channels });
+  }
+  return writeChannelSurfaceStore(pubkey, {
+    version: 2,
+    channels: { ...store.channels, [channelId]: next },
   });
 }
 
@@ -131,5 +190,5 @@ export function clearChannelSurface(
   const store = readChannelSurfaceStore(pubkey);
   if (!Object.hasOwn(store.channels, channelId)) return true;
   const { [channelId]: _, ...channels } = store.channels;
-  return writeChannelSurfaceStore(pubkey, { version: 1, channels });
+  return writeChannelSurfaceStore(pubkey, { version: 2, channels });
 }

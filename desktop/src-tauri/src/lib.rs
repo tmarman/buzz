@@ -171,7 +171,7 @@ pub fn run() {
             }
             // Forward any deep link URLs from the duplicate launch.
             for arg in &argv {
-                if arg.starts_with("buzz://") {
+                if arg.starts_with("buzz://") || arg.starts_with("buzz-alpha://") {
                     handle_deep_link_url(app, arg);
                 }
             }
@@ -358,6 +358,8 @@ pub fn run() {
         .manage(commands::pairing::PairingHandle::new())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            crate::app_state::init_keyring_service(&app_handle.config().identifier);
+            std::env::set_var("BUZZ_DESKTOP_IDENTIFIER", &app_handle.config().identifier);
 
             // ── Phase 2: boot-time sentinel wipe ──────────────────────────────
             // Must run before migrations and identity resolution so the wipe
@@ -366,12 +368,13 @@ pub fn run() {
             // init_nest_dir is called early here (normally it runs inside
             // run_boot_migrations) so reset::run_boot_reset can call nest_dir().
             let reset_outcome = if let Ok(data_dir) = app_handle.path().app_data_dir() {
-                let is_dev_for_reset = data_dir
+                let data_dir_name = data_dir
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(crate::migration::is_dev_data_dir_name)
-                    .unwrap_or(false);
-                crate::managed_agents::init_nest_dir(is_dev_for_reset);
+                    .unwrap_or_default();
+                let is_dev_for_reset = crate::migration::is_dev_data_dir_name(data_dir_name);
+                let is_alpha_for_reset = crate::migration::is_alpha_data_dir_name(data_dir_name);
+                crate::managed_agents::init_nest_dir(is_dev_for_reset, is_alpha_for_reset);
                 crate::reset::run_boot_reset(&data_dir)
             } else {
                 crate::reset::ResetOutcome::default()
@@ -503,7 +506,10 @@ pub fn run() {
             // the now-inert ~/.sprout; the frontend dedupes the toast.
             // Suppressed when a reset completed this boot: the nest was wiped and
             // a fresh ~/.sprout-less state is exactly what we want.
-            if !reset_outcome.completed && migration::migrate_legacy_nest() {
+            let is_alpha_nest = managed_agents::nest_dir()
+                .and_then(|p| p.file_name().map(|n| n.to_os_string()))
+                .is_some_and(|n| n == ".buzz-alpha");
+            if !reset_outcome.completed && !is_alpha_nest && migration::migrate_legacy_nest() {
                 let _ = app_handle.emit("legacy-nest-migrated", ());
             }
 
@@ -524,7 +530,9 @@ pub fn run() {
             // bundled CLI binary. Non-fatal: agents find CLI via PATH.
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(parent) = exe.parent() {
-                    if let Err(error) = managed_agents::ensure_cli_symlink(parent, is_dev_nest) {
+                    if let Err(error) =
+                        managed_agents::ensure_cli_symlink(parent, is_dev_nest, is_alpha_nest)
+                    {
                         eprintln!("buzz-desktop: failed to create CLI symlink: {error}");
                     }
                 }
@@ -697,6 +705,9 @@ pub fn run() {
             get_relay_http_url,
             get_media_proxy_port,
             fetch_link_preview_title,
+            discover_local_surfaces,
+            discover_voxelbox_agents,
+            discover_voxelbox_spaces,
             discover_acp_auth_methods,
             discover_acp_providers,
             discover_git_bash_prerequisite,

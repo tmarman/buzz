@@ -814,10 +814,10 @@ export function ChannelScreen({
           ref={channelContentRef}
         >
           {activeChannel ? (
-            channelSurfaceTab.isAppActive ? (
+            channelSurfaceTab.activeState ? (
               <>
                 {channelHeader}
-                <ChannelSurfacePane state={channelSurfaceTab.state} />
+                <ChannelSurfacePane state={channelSurfaceTab.activeState} />
               </>
             ) : activeChannel.channelType === "forum" ? (
               <ForumChannelContent

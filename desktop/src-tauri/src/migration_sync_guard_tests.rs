@@ -8,6 +8,13 @@ fn is_dev_data_dir_name_rejects_prod_identifier() {
 }
 
 #[test]
+fn alpha_identifier_is_isolated_from_prod_and_dev() {
+    assert!(is_alpha_data_dir_name("com.voxelbox.Buzz"));
+    assert!(!is_alpha_data_dir_name("xyz.block.buzz.app"));
+    assert!(!is_alpha_data_dir_name("xyz.block.buzz.app.dev"));
+}
+
+#[test]
 fn is_dev_data_dir_name_accepts_canonical_dev_identifier() {
     assert!(is_dev_data_dir_name("xyz.block.buzz.app.dev"));
 }

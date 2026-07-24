@@ -378,7 +378,7 @@ pub fn resolve_persisted_identity(app: &AppHandle, state: &AppState) -> Result<(
 
 #[path = "app_state_keyring.rs"]
 mod keyring_config;
-pub(crate) use keyring_config::keyring_service;
+pub(crate) use keyring_config::{init_keyring_service, keyring_service};
 
 /// Keyring key name for the human identity nsec.
 const IDENTITY_KEY_NAME: &str = "identity";

@@ -1,7 +1,14 @@
-import { AppWindow, LogIn } from "lucide-react";
+import {
+  AppWindow,
+  LayoutGrid,
+  LogIn,
+  MessageSquare,
+  Pencil,
+} from "lucide-react";
 import type * as React from "react";
 
 import { ChatHeader } from "@/features/chat/ui/ChatHeader";
+import { ChannelSurfacePickerSection } from "@/features/channels/ui/ChannelSurfacePicker";
 import type { ChannelSurfaceTabHandle } from "@/features/channels/ui/useChannelSurfaceTab";
 import type { EphemeralChannelDisplay } from "@/features/channels/lib/ephemeralChannel";
 import type { ActiveDmHeaderParticipant } from "@/features/channels/useActiveChannelHeader";
@@ -16,6 +23,7 @@ import {
 } from "@/features/profile/ui/ProfileAvatarWithStatus";
 import { Button } from "@/shared/ui/button";
 import type { Channel, PresenceStatus } from "@/shared/api/types";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 
 const DM_HEADER_AVATAR_SIZE = 32;
@@ -75,21 +83,95 @@ export function ChannelScreenHeader({
     !activeChannel.archivedAt &&
     onJoinChannel;
 
-  const surfaceTabButton = surfaceTab?.state.showTab ? (
-    <Button
-      aria-pressed={surfaceTab.isAppActive}
-      onClick={surfaceTab.toggle}
-      size="sm"
-      variant={surfaceTab.isAppActive ? "secondary" : "ghost"}
-    >
-      <AppWindow className="mr-1.5 h-4 w-4" />
-      App
-    </Button>
-  ) : null;
+  const surfaceTabs =
+    surfaceTab && surfaceTab.tabs.length > 0 ? (
+      <div
+        aria-label="Channel views"
+        className="flex items-center gap-0.5"
+        data-testid="channel-surface-tabs"
+        role="tablist"
+      >
+        <Button
+          aria-pressed={!surfaceTab.isAppActive}
+          data-testid="channel-chat-tab"
+          onClick={surfaceTab.deactivate}
+          size="sm"
+          type="button"
+          variant={!surfaceTab.isAppActive ? "secondary" : "ghost"}
+        >
+          <MessageSquare className="mr-1.5 h-4 w-4" />
+          Chat
+        </Button>
+        {surfaceTab.tabs.map((tab) => {
+          const active = surfaceTab.activeSurface === tab.surface;
+          return (
+            <Button
+              aria-pressed={active}
+              data-testid={`channel-surface-tab-${tab.surface}`}
+              key={tab.surface}
+              onClick={() => surfaceTab.activate(tab.surface)}
+              size="sm"
+              type="button"
+              variant={active ? "secondary" : "ghost"}
+            >
+              <AppWindow className="mr-1.5 h-4 w-4" />
+              {tab.surface}
+            </Button>
+          );
+        })}
+        {surfaceTab.activeState?.mode === "frame" &&
+        surfaceTab.activeState.descriptor.ownerAgent ? (
+          <span
+            title={`Editing will open a chat with ${surfaceTab.activeState.descriptor.ownerAgent}`}
+          >
+            <Button
+              aria-label={`Edit ${surfaceTab.activeState.surface}`}
+              disabled
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          </span>
+        ) : null}
+      </div>
+    ) : null;
+
+  const surfacePicker =
+    activeChannel && currentPubkey ? (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            aria-label={
+              surfaceTab?.tabs.length
+                ? "Manage channel apps"
+                : "Add channel app"
+            }
+            data-testid="channel-surface-picker-trigger"
+            size={actionsVariant === "compact" ? "icon" : "sm"}
+            type="button"
+            variant="outline"
+          >
+            <LayoutGrid className="h-4 w-4" />
+            {actionsVariant === "inline" ? (
+              <span>{surfaceTab?.tabs.length ? "Apps" : "Add app"}</span>
+            ) : null}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-80 p-3">
+          <ChannelSurfacePickerSection
+            channelId={activeChannel.id}
+            pubkey={currentPubkey}
+          />
+        </PopoverContent>
+      </Popover>
+    ) : null;
 
   const actions = activeChannel ? (
     <div className="flex items-center gap-1">
-      {surfaceTabButton}
+      {surfaceTabs}
+      {surfacePicker}
       {showJoinButton ? (
         <Button
           disabled={isJoining}

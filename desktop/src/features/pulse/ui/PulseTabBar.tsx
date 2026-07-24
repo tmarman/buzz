@@ -1,14 +1,12 @@
 import { Search } from "lucide-react";
 
 import type { PulseTab } from "@/features/pulse/ui/PulseView";
-import type { RelayAgent } from "@/shared/api/types";
 import { Button } from "@/shared/ui/button";
 
 type PulseTabBarProps = {
   activeTab: PulseTab;
   getPanelId: (tab: PulseTab) => string;
   getTabId: (tab: PulseTab) => string;
-  relayAgents: RelayAgent[];
   onTabChange: (tab: PulseTab) => void;
 };
 
@@ -19,7 +17,6 @@ export function PulseTabBar({
   activeTab,
   getPanelId,
   getTabId,
-  relayAgents,
   onTabChange,
 }: PulseTabBarProps) {
   return (
@@ -102,11 +99,6 @@ export function PulseTabBar({
                 variant="ghost"
               >
                 Agents
-                {relayAgents.length > 0 ? (
-                  <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1 text-2xs font-medium text-muted-foreground">
-                    {relayAgents.length}
-                  </span>
-                ) : null}
               </Button>
               <Button
                 aria-controls={getPanelId("mine")}

@@ -14,7 +14,7 @@ export function ChannelSurfacePane({
 }: {
   state: ChannelSurfaceTabState;
 }) {
-  if (state.showTab && state.mode === "frame") {
+  if (state.mode === "frame") {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <SurfaceFrame name={state.surface} />
@@ -22,7 +22,6 @@ export function ChannelSurfacePane({
     );
   }
 
-  const surfaceName = state.showTab ? state.surface : null;
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground"
@@ -30,9 +29,7 @@ export function ChannelSurfacePane({
     >
       <p className="font-medium text-foreground text-sm">App unavailable</p>
       <p className="max-w-sm text-sm">
-        {surfaceName
-          ? `The “${surfaceName}” app isn't installed on this device. Install it to open it here.`
-          : "No app is mapped to this channel."}
+        {`The “${state.surface}” app isn't installed on this device. Install it to open it here.`}
       </p>
     </div>
   );

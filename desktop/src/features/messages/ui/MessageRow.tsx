@@ -35,6 +35,10 @@ import { useChannelNavigation } from "@/shared/context/ChannelNavigationContext"
 import { parseImetaTags } from "@/features/messages/lib/parseImeta";
 import { useMessageEmoji } from "@/features/messages/lib/useMessageEmoji";
 import { parseWaveMessageContent } from "@/features/messages/lib/waveMessage";
+import {
+  authenticateAgencyMessageEnvelope,
+  stripAgencyMessageEnvelope,
+} from "@/features/messages/lib/agencyMessageBlocks";
 import { resolveSnapshotSharedBy } from "@/features/messages/lib/snapshotSharedBy";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import { Markdown } from "@/shared/ui/markdown";
@@ -44,6 +48,7 @@ import { MessageAgentOwner } from "./MessageAgentOwner";
 import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
+import { AgencyApprovalCard } from "./AgencyApprovalCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
@@ -217,6 +222,20 @@ export const MessageRow = React.memo(
 
       return Object.keys(values).length > 0 ? values : undefined;
     }, [isKnownAgentPubkey, mentionPubkeysByName]);
+    const agencyEnvelope = React.useMemo(
+      () =>
+        authenticateAgencyMessageEnvelope(
+          message.body,
+          message.signerPubkey,
+          Boolean(
+            message.signerPubkey && isKnownAgentPubkey(message.signerPubkey),
+          ),
+        ),
+      [isKnownAgentPubkey, message.body, message.signerPubkey],
+    );
+    const visibleBody = agencyEnvelope
+      ? stripAgencyMessageEnvelope(message.body)
+      : message.body;
 
     const imetaByUrl = React.useMemo(
       () => (message.tags ? parseImetaTags(message.tags) : undefined),
@@ -232,7 +251,7 @@ export const MessageRow = React.memo(
     );
 
     const { customEmoji, emojiOnly } = useMessageEmoji(
-      message.body,
+      visibleBody,
       message.tags,
     );
     const bodyOffsetClass = emojiOnly ? "mt-1" : "-mt-0.5";
@@ -350,31 +369,38 @@ export const MessageRow = React.memo(
           }
 
           return (
-            <Markdown
-              channelNames={channelNames}
-              className={cn(
-                "max-w-full text-sm",
-                emojiOnly &&
-                  "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
-              )}
-              // Only pass the author pubkey for agent-authored messages so
-              // config-nudge cards can authenticate the sender. Uses the
-              // raw event signer (signerPubkey), not a relay-delegated display
-              // author, because the agent itself must have signed the card.
-              configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
-                message,
-                isKnownAgentPubkey,
-              )}
-              content={message.body}
-              customEmoji={customEmoji}
-              imetaByUrl={imetaByUrl}
-              agentMentionPubkeysByName={agentMentionPubkeysByName}
-              mentionNames={mentionNames}
-              mentionPubkeysByName={mentionPubkeysByName}
-              searchQuery={searchQuery}
-              snapshotSharedBy={snapshotSharedBy}
-              videoReviewContext={videoReviewContext}
-            />
+            <>
+              {visibleBody ? (
+                <Markdown
+                  channelNames={channelNames}
+                  className={cn(
+                    "max-w-full text-sm",
+                    emojiOnly &&
+                      "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
+                  )}
+                  // Only pass the author pubkey for agent-authored messages so
+                  // config-nudge cards can authenticate the sender. Uses the
+                  // raw event signer (signerPubkey), not a relay-delegated display
+                  // author, because the agent itself must have signed the card.
+                  configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
+                    message,
+                    isKnownAgentPubkey,
+                  )}
+                  content={visibleBody}
+                  customEmoji={customEmoji}
+                  imetaByUrl={imetaByUrl}
+                  agentMentionPubkeysByName={agentMentionPubkeysByName}
+                  mentionNames={mentionNames}
+                  mentionPubkeysByName={mentionPubkeysByName}
+                  searchQuery={searchQuery}
+                  snapshotSharedBy={snapshotSharedBy}
+                  videoReviewContext={videoReviewContext}
+                />
+              ) : null}
+              {agencyEnvelope?.blocks.map((block) => (
+                <AgencyApprovalCard approval={block} key={block.id} />
+              ))}
+            </>
           );
       }
     };
@@ -817,6 +843,7 @@ export const MessageRow = React.memo(
   (prev, next) =>
     prev.message.id === next.message.id &&
     prev.message.pubkey === next.message.pubkey &&
+    prev.message.signerPubkey === next.message.signerPubkey &&
     prev.message.body === next.message.body &&
     prev.message.author === next.message.author &&
     prev.message.isAgent === next.message.isAgent &&

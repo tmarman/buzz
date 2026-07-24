@@ -16,6 +16,20 @@ use crate::error::CliError;
 /// joined with this segment matches `app.path().app_data_dir()` exactly
 /// (Tauri resolves app-data as the platform data dir plus the identifier).
 const PROD_BUNDLE_IDENTIFIER: &str = "xyz.block.buzz.app";
+const ALPHA_BUNDLE_IDENTIFIER: &str = "com.voxelbox.Buzz";
+
+fn bundle_identifier_for_invocation(program: &Path, configured: Option<&str>) -> &'static str {
+    if configured == Some(ALPHA_BUNDLE_IDENTIFIER)
+        || program
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "buzz-alpha")
+    {
+        ALPHA_BUNDLE_IDENTIFIER
+    } else {
+        PROD_BUNDLE_IDENTIFIER
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChannelTemplateRecord {
@@ -73,8 +87,16 @@ pub fn resolve_templates_path(override_path: Option<&str>) -> Result<PathBuf, Cl
     let data_dir = dirs::data_dir().ok_or_else(|| {
         CliError::Other("could not resolve platform app-data directory".to_string())
     })?;
+    let program = std::env::args_os()
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let configured = std::env::var("BUZZ_DESKTOP_IDENTIFIER").ok();
     Ok(data_dir
-        .join(PROD_BUNDLE_IDENTIFIER)
+        .join(bundle_identifier_for_invocation(
+            &program,
+            configured.as_deref(),
+        ))
         .join("templates")
         .join("channel-templates.json"))
 }
@@ -144,6 +166,18 @@ mod tests {
     fn resolve_templates_path_defaults_to_prod_bundle() {
         let path = resolve_templates_path(None).unwrap();
         assert!(path.ends_with("xyz.block.buzz.app/templates/channel-templates.json"));
+    }
+
+    #[test]
+    fn alpha_invocation_uses_alpha_bundle() {
+        assert_eq!(
+            bundle_identifier_for_invocation(Path::new("buzz-alpha"), None),
+            ALPHA_BUNDLE_IDENTIFIER
+        );
+        assert_eq!(
+            bundle_identifier_for_invocation(Path::new("buzz"), Some(ALPHA_BUNDLE_IDENTIFIER)),
+            ALPHA_BUNDLE_IDENTIFIER
+        );
     }
 
     #[test]

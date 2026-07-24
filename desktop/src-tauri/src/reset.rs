@@ -98,12 +98,13 @@ pub(crate) struct ResetContext<'a> {
     /// present and non-empty, wiped alongside `app_data_dir` to prevent
     /// `migrate_legacy_app_data_dir` from restoring the old identity.
     pub legacy_app_data_dir: Option<PathBuf>,
-    /// Nest dir (`~/.buzz` or `~/.buzz-dev`) scoped to this build's variant,
+    /// Nest dir scoped to this build's app channel,
     /// injected so unit tests can override without touching the global OnceLock.
     pub nest_dir: Option<PathBuf>,
     pub keychain: &'a dyn ResetKeychain,
     pub home_dir: Option<PathBuf>,
     pub is_dev: bool,
+    pub is_alpha: bool,
 }
 
 /// Entry point called from `lib.rs` setup (before migrations).
@@ -120,6 +121,11 @@ pub(crate) fn run_boot_reset(app_data_dir: &Path) -> ResetOutcome {
         .and_then(|n| n.to_str())
         .map(crate::migration::is_dev_data_dir_name)
         .unwrap_or(false);
+    let is_alpha = app_data_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(crate::migration::is_alpha_data_dir_name)
+        .unwrap_or(false);
 
     let store = crate::secret_store::SecretStore::keyring(crate::app_state::keyring_service());
     let home_dir = dirs::home_dir();
@@ -133,6 +139,7 @@ pub(crate) fn run_boot_reset(app_data_dir: &Path) -> ResetOutcome {
         keychain: &store,
         home_dir,
         is_dev,
+        is_alpha,
     };
 
     run_boot_reset_with_keychain(ctx)
@@ -216,9 +223,11 @@ pub(crate) fn run_boot_reset_with_keychain(ctx: ResetContext<'_>) -> ResetOutcom
         let _ = std::fs::remove_dir_all(nest);
     }
     if let Some(ref home) = ctx.home_dir {
-        let _ = std::fs::remove_dir_all(home.join(".sprout"));
-        let _ = std::fs::remove_dir_all(home.join(".config").join("buzz-agent"));
-        let link_name = crate::managed_agents::cli_link_name(ctx.is_dev);
+        if !ctx.is_alpha {
+            let _ = std::fs::remove_dir_all(home.join(".sprout"));
+            let _ = std::fs::remove_dir_all(home.join(".config").join("buzz-agent"));
+        }
+        let link_name = crate::managed_agents::cli_link_name(ctx.is_dev, ctx.is_alpha);
         let _ = std::fs::remove_file(home.join(".local").join("bin").join(link_name));
     }
 
@@ -408,6 +417,7 @@ mod tests {
             keychain,
             home_dir: None, // skip nest/sprout/CLI ops in unit tests
             is_dev,
+            is_alpha: false,
         }
     }
 
@@ -451,6 +461,7 @@ mod tests {
             keychain: &kc,
             home_dir: None,
             is_dev: false,
+            is_alpha: false,
         };
 
         let outcome = run_boot_reset_with_keychain(ctx);
@@ -564,6 +575,7 @@ mod tests {
             keychain: &kc,
             home_dir: None,
             is_dev: true,
+            is_alpha: false,
         };
 
         let outcome = run_boot_reset_with_keychain(ctx);
@@ -600,6 +612,7 @@ mod tests {
             keychain: &kc,
             home_dir: None,
             is_dev: false,
+            is_alpha: false,
         };
 
         let outcome = run_boot_reset_with_keychain(ctx);
@@ -607,6 +620,39 @@ mod tests {
         assert!(outcome.completed, "wipe must complete");
         assert!(!prod_nest.exists(), "prod nest must be wiped");
         assert!(dev_nest.exists(), "dev nest must survive");
+    }
+
+    #[test]
+    fn test_alpha_reset_preserves_official_global_state() {
+        let tmp = TempDir::new().unwrap();
+        let alpha_nest = tmp.path().join(".buzz-alpha");
+        let sprout = tmp.path().join(".sprout");
+        let config = tmp.path().join(".config").join("buzz-agent");
+        let local_bin = tmp.path().join(".local").join("bin");
+        for dir in [&alpha_nest, &sprout, &config, &local_bin] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(local_bin.join("buzz"), "official").unwrap();
+        std::fs::write(local_bin.join("buzz-alpha"), "alpha").unwrap();
+        let app_data = tmp.path().join("com.voxelbox.Buzz");
+        std::fs::create_dir_all(&app_data).unwrap();
+        write_sentinel(&app_data).unwrap();
+        let kc = FakeKeychain::ok();
+        let outcome = run_boot_reset_with_keychain(ResetContext {
+            app_data_dir: &app_data,
+            legacy_app_data_dir: None,
+            nest_dir: Some(alpha_nest.clone()),
+            keychain: &kc,
+            home_dir: Some(tmp.path().to_path_buf()),
+            is_dev: false,
+            is_alpha: true,
+        });
+        assert!(outcome.completed);
+        assert!(!alpha_nest.exists());
+        assert!(!local_bin.join("buzz-alpha").exists());
+        assert!(local_bin.join("buzz").exists());
+        assert!(sprout.exists());
+        assert!(config.exists());
     }
 
     // ── Test 8: legacy app-data removed on reset ──────────────────────────────
@@ -633,6 +679,7 @@ mod tests {
             keychain: &kc,
             home_dir: None,
             is_dev: false,
+            is_alpha: false,
         };
 
         let outcome = run_boot_reset_with_keychain(ctx);
@@ -716,6 +763,7 @@ mod tests {
             keychain: &kc,
             home_dir: None,
             is_dev: true,
+            is_alpha: false,
         };
         let outcome = run_boot_reset_with_keychain(ctx);
         assert!(outcome.completed, "reset must complete");
@@ -810,6 +858,7 @@ mod tests {
             keychain: &kc1,
             home_dir: Some(tmp.path().to_path_buf()),
             is_dev: false,
+            is_alpha: false,
         };
         let first = run_boot_reset_with_keychain(ctx1);
         assert!(first.failed, "first attempt must fail");
@@ -833,6 +882,7 @@ mod tests {
             keychain: &kc2,
             home_dir: Some(tmp.path().to_path_buf()),
             is_dev: false,
+            is_alpha: false,
         };
         let second = run_boot_reset_with_keychain(ctx2);
         assert!(second.completed, "second attempt must complete");

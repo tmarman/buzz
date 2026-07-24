@@ -16,7 +16,7 @@ import { AgentSnapshotImportDialog } from "./AgentSnapshotImportDialog";
 import { TeamSnapshotExportDialog } from "./TeamSnapshotExportDialog";
 import { TeamSnapshotImportDialog } from "./TeamSnapshotImportDialog";
 import { TeamShareDialog } from "./TeamShareDialog";
-import { RelayDirectorySection } from "./RelayDirectorySection";
+import { RemoteAgentsSection } from "./RemoteAgentsSection";
 import { SecretRevealDialog } from "./SecretRevealDialog";
 import { TeamDeleteDialog } from "./TeamDeleteDialog";
 import { TeamDialog } from "./TeamDialog";
@@ -202,6 +202,20 @@ export function AgentsView() {
               }}
             />
 
+            <RemoteAgentsSection
+              error={
+                agents.relayAgentsQuery.error instanceof Error
+                  ? agents.relayAgentsQuery.error
+                  : null
+              }
+              isLoading={agents.relayAgentsQuery.isLoading}
+              managedPubkeys={agents.managedPubkeys}
+              onOpenAgentProfile={(pubkey, options) => {
+                openProfilePanel?.(pubkey, options);
+              }}
+              relayAgents={agents.relayAgentsQuery.data ?? []}
+            />
+
             <TeamsSection
               error={
                 teamActions.teamsQuery.error instanceof Error
@@ -225,17 +239,6 @@ export function AgentsView() {
               }}
               personas={personas.libraryPersonas}
               teams={teamActions.teams}
-            />
-
-            <RelayDirectorySection
-              error={
-                agents.relayAgentsQuery.error instanceof Error
-                  ? agents.relayAgentsQuery.error
-                  : null
-              }
-              isLoading={agents.relayAgentsQuery.isLoading}
-              managedPubkeys={agents.managedPubkeys}
-              relayAgents={agents.relayAgentsQuery.data ?? []}
             />
           </div>
         </div>

@@ -9,10 +9,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 // Contract this test pins:
 //   ChannelSurfacePicker — a small affordance (lives inside an existing channel
 //   affordance such as the channel menu / ChannelManagementSheet popover) that
-//   lists surfaces from daemon discovery and sets/clears the channel -> surface
+//   lists Space-eligible surfaces and pins/unpins channel app tabs.
 //   mapping. Presentational props:
-//     { surfaces: string[]; selectedSurface: string | null;
-//       onSelect: (name: string) => void; onClear: () => void }
+//     { surfaces: descriptor[]; spaces: summary[]; selectedSpace: string | null;
+//       selectedSurfaces: string[]; onToggle; onSpaceChange }
 //   - lists each discovered surface name
 //   - empty `surfaces` (discovery failure degrades to []) → neutral empty state,
 //     never a crash
@@ -22,9 +22,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 //   channelSurfaceStorage module (set writes; clear removes).
 import { ChannelSurfacePicker } from "./ChannelSurfacePicker.tsx";
 import {
-  setChannelSurface,
-  getChannelSurface,
-  clearChannelSurface,
+  addChannelSurface,
+  getChannelSurfaces,
+  removeChannelSurface,
 } from "../../sidebar/lib/channelSurfaceStorage.ts";
 
 function makeLocalStorage() {
@@ -52,16 +52,24 @@ function installLocalStorage() {
 
 const PUBKEY = "a".repeat(64);
 const noop = () => {};
+const descriptor = (name, space = "global") => ({
+  name,
+  space,
+  description: "",
+  ownerAgent: "",
+});
 
 // ── render: list discovered surfaces ──────────────────────────────────────────
 
 test("ChannelSurfacePicker lists each discovered surface name", () => {
   const html = renderToStaticMarkup(
     React.createElement(ChannelSurfacePicker, {
-      surfaces: ["agency", "notebook"],
-      selectedSurface: null,
-      onSelect: noop,
-      onClear: noop,
+      surfaces: [descriptor("agency"), descriptor("notebook")],
+      spaces: [],
+      selectedSpace: null,
+      selectedSurfaces: [],
+      onToggle: noop,
+      onSpaceChange: noop,
     }),
   );
   assert.ok(html.includes("agency"), "should list the 'agency' surface");
@@ -76,9 +84,11 @@ test("ChannelSurfacePicker renders an empty state (no crash) when discovery is e
     html = renderToStaticMarkup(
       React.createElement(ChannelSurfacePicker, {
         surfaces: [],
-        selectedSurface: null,
-        onSelect: noop,
-        onClear: noop,
+        spaces: [],
+        selectedSpace: null,
+        selectedSurfaces: [],
+        onToggle: noop,
+        onSpaceChange: noop,
       }),
     );
   });
@@ -90,10 +100,12 @@ test("ChannelSurfacePicker renders an empty state (no crash) when discovery is e
 test("ChannelSurfacePicker reflects the currently selected surface", () => {
   const html = renderToStaticMarkup(
     React.createElement(ChannelSurfacePicker, {
-      surfaces: ["agency", "notebook"],
-      selectedSurface: "agency",
-      onSelect: noop,
-      onClear: noop,
+      surfaces: [descriptor("agency"), descriptor("notebook")],
+      spaces: [],
+      selectedSpace: null,
+      selectedSurfaces: ["agency"],
+      onToggle: noop,
+      onSpaceChange: noop,
     }),
   );
   assert.ok(
@@ -104,15 +116,40 @@ test("ChannelSurfacePicker reflects the currently selected surface", () => {
 
 // ── set / clear round-trips through channelSurfaceStorage ─────────────────────
 
-test("selecting a surface writes the mapping (via channelSurfaceStorage)", () => {
+test("selecting surfaces writes ordered tabs (via channelSurfaceStorage)", () => {
   installLocalStorage();
-  setChannelSurface(PUBKEY, "chan-1", "agency");
-  assert.equal(getChannelSurface(PUBKEY, "chan-1"), "agency");
+  addChannelSurface(PUBKEY, "chan-1", "agency");
+  addChannelSurface(PUBKEY, "chan-1", "notebook");
+  assert.deepEqual(getChannelSurfaces(PUBKEY, "chan-1"), [
+    "agency",
+    "notebook",
+  ]);
 });
 
-test("clearing removes the mapping (via channelSurfaceStorage)", () => {
+test("unpinning removes only the selected tab (via channelSurfaceStorage)", () => {
   installLocalStorage();
-  setChannelSurface(PUBKEY, "chan-1", "agency");
-  clearChannelSurface(PUBKEY, "chan-1");
-  assert.equal(getChannelSurface(PUBKEY, "chan-1"), undefined);
+  addChannelSurface(PUBKEY, "chan-1", "agency");
+  addChannelSurface(PUBKEY, "chan-1", "notebook");
+  removeChannelSurface(PUBKEY, "chan-1", "agency");
+  assert.deepEqual(getChannelSurfaces(PUBKEY, "chan-1"), ["notebook"]);
+});
+
+test("Space filtering keeps global apps and the selected Space apps", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ChannelSurfacePicker, {
+      surfaces: [
+        descriptor("launcher"),
+        descriptor("control", "Voxelbox"),
+        descriptor("finances", "Finances"),
+      ],
+      spaces: [{ name: "Voxelbox", description: "" }],
+      selectedSpace: "Voxelbox",
+      selectedSurfaces: [],
+      onToggle: noop,
+      onSpaceChange: noop,
+    }),
+  );
+  assert.match(html, />launcher</);
+  assert.match(html, />control</);
+  assert.doesNotMatch(html, />finances</);
 });

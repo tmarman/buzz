@@ -6,6 +6,14 @@ use url::Url;
 
 use crate::nostr_bind;
 
+fn deep_link_scheme_for_identifier(identifier: &str) -> &'static str {
+    if crate::migration::is_alpha_data_dir_name(identifier) {
+        "buzz-alpha"
+    } else {
+        "buzz"
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PendingCommunityDeepLink {
@@ -304,7 +312,8 @@ pub(crate) fn handle_deep_link_url(app: &tauri::AppHandle, url_str: &str) {
         }
     };
 
-    if url.scheme() != "buzz" {
+    let expected_scheme = deep_link_scheme_for_identifier(&app.config().identifier);
+    if url.scheme() != expected_scheme {
         eprintln!("buzz-desktop: ignoring unsupported deep link scheme: {url_str}");
         return;
     }
@@ -389,9 +398,22 @@ mod tests {
     use url::Url;
 
     use super::{
-        parse_add_community_deep_link, parse_join_deep_link, parse_message_deep_link,
-        parse_nostr_bind_deep_link, PendingCommunityDeepLink, PendingCommunityDeepLinks,
+        deep_link_scheme_for_identifier, parse_add_community_deep_link, parse_join_deep_link,
+        parse_message_deep_link, parse_nostr_bind_deep_link, PendingCommunityDeepLink,
+        PendingCommunityDeepLinks,
     };
+
+    #[test]
+    fn alpha_and_official_use_distinct_deep_link_schemes() {
+        assert_eq!(
+            deep_link_scheme_for_identifier("com.voxelbox.Buzz"),
+            "buzz-alpha"
+        );
+        assert_eq!(
+            deep_link_scheme_for_identifier("xyz.block.buzz.app"),
+            "buzz"
+        );
+    }
 
     fn pending(id: &str, relay_url: &str, code: Option<&str>) -> PendingCommunityDeepLink {
         PendingCommunityDeepLink {

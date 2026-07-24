@@ -15,7 +15,9 @@ import test from "node:test";
 //
 // Tests MUST stub global fetch and never hit the network.
 import {
+  fetchInstalledSurfaceDescriptors,
   fetchInstalledSurfaces,
+  fetchVoxelboxSpaces,
   isSurfaceAllowed,
 } from "./surfaceDiscovery.ts";
 
@@ -104,6 +106,136 @@ test("fetchInstalledSurfaces returns [] when body is not an array (no throw)", a
       new Response(JSON.stringify({ name: "agency" }), { status: 200 }),
     async () => {
       assert.deepEqual(await fetchInstalledSurfaces(), []);
+    },
+  );
+});
+
+test("fetchInstalledSurfaces trims names and drops empty manifest names", async () => {
+  await withFetch(
+    async () =>
+      new Response(
+        JSON.stringify([
+          { name: " control " },
+          { name: " " },
+          { name: "flow" },
+        ]),
+        { status: 200 },
+      ),
+    async () => {
+      assert.deepEqual(await fetchInstalledSurfaces(), ["control", "flow"]);
+    },
+  );
+});
+
+test("surface descriptors normalize explicit and legacy Space scope", async () => {
+  await withFetch(
+    async () =>
+      new Response(
+        JSON.stringify([
+          {
+            id: " control ",
+            space: " global ",
+            description: " Control plane ",
+          },
+          { name: "scout", org: "voxelbox-ai" },
+          { name: "flow" },
+        ]),
+        { status: 200 },
+      ),
+    async () => {
+      assert.deepEqual(await fetchInstalledSurfaceDescriptors(), [
+        {
+          name: "control",
+          space: "global",
+          description: "Control plane",
+          ownerAgent: "",
+        },
+        {
+          name: "scout",
+          space: "voxelbox-ai",
+          description: "",
+          ownerAgent: "",
+        },
+        {
+          name: "flow",
+          space: "global",
+          description: "",
+          ownerAgent: "",
+        },
+      ]);
+    },
+  );
+});
+
+test("fetchInstalledSurfaces uses native IPC inside Tauri", async () => {
+  const previousIsTauri = globalThis.isTauri;
+  const previousWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  let invokedCommand = null;
+
+  globalThis.isTauri = true;
+  globalThis.window = {
+    __TAURI_INTERNALS__: {
+      invoke(command) {
+        invokedCommand = command;
+        return Promise.resolve([
+          {
+            name: "control",
+            space: "global",
+            description: "Control plane",
+            ownerAgent: "weaver",
+          },
+          {
+            name: " flow ",
+            space: "tmarman",
+            description: "",
+            ownerAgent: "",
+          },
+          {
+            name: "",
+            space: "global",
+            description: "",
+            ownerAgent: "",
+          },
+        ]);
+      },
+    },
+  };
+  globalThis.fetch = async () => {
+    throw new Error("web fetch must not run inside Tauri");
+  };
+
+  try {
+    assert.deepEqual(await fetchInstalledSurfaces(), ["control", "flow"]);
+    assert.equal(invokedCommand, "discover_local_surfaces");
+  } finally {
+    globalThis.isTauri = previousIsTauri;
+    globalThis.window = previousWindow;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchVoxelboxSpaces strips private registry fields", async () => {
+  await withFetch(
+    async (url) => {
+      assert.equal(url, "http://localhost:1337/api/spaces");
+      return new Response(
+        JSON.stringify([
+          {
+            name: " voxelbox-ai ",
+            description: " Agent OS ",
+            workspace: "/private/path",
+            tools: ["private"],
+          },
+          { name: " " },
+        ]),
+        { status: 200 },
+      );
+    },
+    async () => {
+      assert.deepEqual(await fetchVoxelboxSpaces(), [
+        { name: "voxelbox-ai", description: "Agent OS" },
+      ]);
     },
   );
 });

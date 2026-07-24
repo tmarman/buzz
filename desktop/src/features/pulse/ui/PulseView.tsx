@@ -333,7 +333,6 @@ export function PulseView({ currentPubkey }: PulseViewProps) {
         getPanelId={pulsePanelId}
         getTabId={pulseTabId}
         onTabChange={setActiveTab}
-        relayAgents={relayAgents}
       />
 
       <div className="mt-0 min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>

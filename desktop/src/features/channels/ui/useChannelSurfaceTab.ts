@@ -1,40 +1,50 @@
 import * as React from "react";
 
 import {
-  getChannelSurface,
+  getChannelSurfaces,
   subscribeChannelSurface,
 } from "@/features/sidebar/lib/channelSurfaceStorage";
-import { fetchInstalledSurfaces } from "@/features/surfaces/lib/surfaceDiscovery";
+import {
+  fetchInstalledSurfaceDescriptors,
+  type InstalledSurfaceDescriptor,
+} from "@/features/surfaces/lib/surfaceDiscovery";
 
 export type ChannelSurfaceTabState =
-  | { showTab: false; mode: "none" }
-  | { showTab: true; mode: "frame"; surface: string }
-  | { showTab: true; mode: "empty"; surface: string };
+  | {
+      mode: "frame";
+      surface: string;
+      descriptor: InstalledSurfaceDescriptor;
+    }
+  | { mode: "empty"; surface: string; descriptor: null };
 
 /**
- * Pure decision for the channel-header app tab.
+ * Resolve all ordered channel app tabs against daemon discovery.
  *
- * The tab is OFFERED whenever a channel -> surface mapping exists, but its body
- * is allowlist-gated: a mapped name absent from daemon discovery falls through
- * to a neutral empty state, NEVER a raw iframe.
+ * Pinned-but-unavailable names remain visible as neutral empty tabs, but only a
+ * descriptor returned by native daemon discovery can reach SurfaceFrame.
  */
-export function resolveChannelSurfaceTab(
-  mappedSurface: string | null | undefined,
-  installedSurfaces: readonly string[],
-): ChannelSurfaceTabState {
-  if (!mappedSurface) {
-    return { showTab: false, mode: "none" };
-  }
-  const mode = installedSurfaces.includes(mappedSurface) ? "frame" : "empty";
-  return { showTab: true, mode, surface: mappedSurface };
+export function resolveChannelSurfaceTabs(
+  mappedSurfaces: readonly string[],
+  installedSurfaces: readonly InstalledSurfaceDescriptor[],
+): ChannelSurfaceTabState[] {
+  const installedByName = new Map(
+    installedSurfaces.map((surface) => [surface.name, surface]),
+  );
+  return mappedSurfaces.map((surface) => {
+    const descriptor = installedByName.get(surface);
+    return descriptor
+      ? { mode: "frame" as const, surface, descriptor }
+      : { mode: "empty" as const, surface, descriptor: null };
+  });
 }
 
 export type ChannelSurfaceTabHandle = {
-  state: ChannelSurfaceTabState;
+  tabs: ChannelSurfaceTabState[];
+  activeSurface: string | null;
+  activeState: ChannelSurfaceTabState | null;
   isAppActive: boolean;
-  activate: () => void;
+  activate: (surface: string) => void;
   deactivate: () => void;
-  toggle: () => void;
 };
 
 /**
@@ -51,57 +61,72 @@ export function useChannelSurfaceTab({
   channelId: string | null;
   pubkey: string | null | undefined;
 }): ChannelSurfaceTabHandle {
-  const [installedSurfaces, setInstalledSurfaces] = React.useState<string[]>(
-    [],
-  );
-  const [active, setActive] = React.useState(false);
+  const [installedSurfaces, setInstalledSurfaces] = React.useState<
+    InstalledSurfaceDescriptor[]
+  >([]);
+  const [activeSurface, setActiveSurface] = React.useState<string | null>(null);
 
   // Reactive read of the mapping. useSyncExternalStore re-reads whenever the
   // storage module reports a set/clear, so clearing the mapping (in the picker)
   // flips the tab to its empty/none state instead of stranding a live iframe.
-  const getMappedSurface = React.useCallback((): string | null => {
-    if (!pubkey || !channelId) return null;
-    return getChannelSurface(pubkey, channelId) ?? null;
+  const getMappedSurfacesSerialized = React.useCallback((): string => {
+    if (!pubkey || !channelId) return "[]";
+    return JSON.stringify(getChannelSurfaces(pubkey, channelId));
   }, [pubkey, channelId]);
-  const mappedSurface = React.useSyncExternalStore(
+  const mappedSurfacesSerialized = React.useSyncExternalStore(
     subscribeChannelSurface,
-    getMappedSurface,
-    getMappedSurface,
+    getMappedSurfacesSerialized,
+    getMappedSurfacesSerialized,
+  );
+  const mappedSurfaces = React.useMemo(
+    () => JSON.parse(mappedSurfacesSerialized) as string[],
+    [mappedSurfacesSerialized],
   );
 
   // Re-validate the allowlist whenever the mapping changes (and on mount). Any
   // discovery failure degrades to [] so the allowlist gate falls through to the
   // empty state rather than throwing into render.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mappedSurface is the intended re-fetch trigger (fresh allowlist when a surface is opened/remapped), not a value read in the effect body.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mappedSurfaces is the intended re-fetch trigger (fresh allowlist when tabs change), not a value read in the effect body.
   React.useEffect(() => {
     let cancelled = false;
-    void fetchInstalledSurfaces().then((names) => {
-      if (!cancelled) setInstalledSurfaces(names);
+    void fetchInstalledSurfaceDescriptors().then((descriptors) => {
+      if (!cancelled) setInstalledSurfaces(descriptors);
     });
     return () => {
       cancelled = true;
     };
-  }, [mappedSurface]);
+  }, [mappedSurfaces]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset activation exactly when the active channel changes.
   React.useEffect(() => {
-    setActive(false);
+    setActiveSurface(null);
   }, [channelId]);
 
-  const state = React.useMemo(
-    () => resolveChannelSurfaceTab(mappedSurface, installedSurfaces),
-    [mappedSurface, installedSurfaces],
+  const tabs = React.useMemo(
+    () => resolveChannelSurfaceTabs(mappedSurfaces, installedSurfaces),
+    [mappedSurfaces, installedSurfaces],
   );
 
-  const activate = React.useCallback(() => setActive(true), []);
-  const deactivate = React.useCallback(() => setActive(false), []);
-  const toggle = React.useCallback(() => setActive((value) => !value), []);
+  const activeState = tabs.find((tab) => tab.surface === activeSurface) ?? null;
+
+  React.useEffect(() => {
+    if (activeSurface && !activeState) {
+      setActiveSurface(null);
+    }
+  }, [activeState, activeSurface]);
+
+  const activate = React.useCallback(
+    (surface: string) => setActiveSurface(surface),
+    [],
+  );
+  const deactivate = React.useCallback(() => setActiveSurface(null), []);
 
   return {
-    state,
-    isAppActive: active && state.showTab,
+    tabs,
+    activeSurface,
+    activeState,
+    isAppActive: activeState !== null,
     activate,
     deactivate,
-    toggle,
   };
 }

@@ -1,4 +1,4 @@
-//! Buzz Nest — persistent agent workspace at `~/.buzz`.
+//! Buzz Nest — persistent agent workspace isolated by app channel.
 //!
 //! Creates a shared knowledge directory on first launch so every
 //! Buzz-spawned agent starts with orientation (AGENTS.md) and a
@@ -21,11 +21,7 @@ use crate::managed_agents::discovery::known_skill_dirs;
 #[cfg(unix)]
 use crate::util::create_symlink;
 
-/// Subdirectories created inside the nest.
-/// `REPOS` is intentionally absent: it is provisioned by
-/// [`super::repos::ensure_repos_symlink`], which makes it either a real directory (default)
-/// or a symlink to a user-configured `repos_dir`. Creating it here
-/// unconditionally would race a future symlink re-point.
+/// Nest subdirectories; `REPOS` is provisioned separately as a dir or symlink.
 const NEST_DIRS: &[&str] = &[
     "GUIDES",
     "RESEARCH",
@@ -35,21 +31,17 @@ const NEST_DIRS: &[&str] = &[
     ".scratch",
 ];
 
-/// Default AGENTS.md content written on first init.
-/// Fully static — no runtime interpolation, no secrets, no user paths.
+/// Static AGENTS.md content written on first init.
 pub(crate) const AGENTS_MD: &str = include_str!("nest_agents.md");
 
 /// Default SKILL.md content for the buzz-cli skill.
 /// Written to ~/.buzz/.agents/skills/buzz-cli/SKILL.md on first init.
 const BUZZ_CLI_SKILL_MD: &str = include_str!("nest_skill.md");
 
-/// Template content version for AGENTS.md static content (above managed markers).
-/// Bump this when changing `nest_agents.md` to trigger refresh on existing installs.
-/// Version 1 is implicitly "before this mechanism existed" (no version file).
+/// Bump when changing the static portion of `nest_agents.md`.
 const NEST_AGENTS_VERSION: u32 = 4;
 
-/// Template content version for SKILL.md.
-/// Bump this when changing `nest_skill.md` to trigger refresh on existing installs.
+/// Bump when changing `nest_skill.md`.
 const NEST_SKILL_VERSION: u32 = 4;
 
 const BEGIN_MARKER: &str = "<!-- BEGIN BUZZ MANAGED";
@@ -67,6 +59,8 @@ const NEST_DIR_PROD: &str = ".buzz";
 /// `.repos-dir` dotfile and `REPOS` symlink.
 const NEST_DIR_DEV: &str = ".buzz-dev";
 
+const NEST_DIR_ALPHA: &str = ".buzz-alpha";
+
 /// Process-lifetime nest directory. Initialized once at startup via
 /// [`init_nest_dir`] before any call to [`nest_dir`].
 ///
@@ -82,19 +76,28 @@ static NEST_DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new
 /// may result in a filesystem operation). Subsequent calls are no-ops — the
 /// `OnceLock` is set exactly once.
 ///
-/// `is_dev` should be `true` when the running binary is a dev build — i.e.
-/// when the Tauri app-data directory name starts with `"xyz.block.buzz.app.dev"`.
-/// Pass `false` for production (signed DMG) builds.
-pub fn init_nest_dir(is_dev: bool) {
-    let suffix = if is_dev { NEST_DIR_DEV } else { NEST_DIR_PROD };
-    let path = dirs::home_dir().map(|h| h.join(suffix));
+/// `is_dev` should be `true` for a development app-data directory.
+/// `is_alpha` should be `true` for the separately branded Alpha release.
+fn nest_dir_name(is_dev: bool, is_alpha: bool) -> &'static str {
+    if is_alpha {
+        NEST_DIR_ALPHA
+    } else if is_dev {
+        NEST_DIR_DEV
+    } else {
+        NEST_DIR_PROD
+    }
+}
+
+pub fn init_nest_dir(is_dev: bool, is_alpha: bool) {
+    let path = dirs::home_dir().map(|h| h.join(nest_dir_name(is_dev, is_alpha)));
     // set() is a no-op when already initialized, which is correct: only the
     // first call (at boot, before any filesystem work) should win.
     let _ = NEST_DIR.set(path);
 }
 
-/// Returns the nest root path (`~/.buzz` for prod, `~/.buzz-dev` for dev),
-/// or `None` if the home directory cannot be resolved.
+/// Returns the nest root path (`~/.buzz` for prod, `~/.buzz-dev` for dev,
+/// or `~/.buzz-alpha` for Alpha), or `None` if the home directory cannot be
+/// resolved.
 ///
 /// If [`init_nest_dir`] has not been called yet (e.g. in unit tests), falls
 /// back to the production path `~/.buzz`.
@@ -333,35 +336,25 @@ fn ensure_skill_symlinks(_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Returns the `~/.local/bin` link name for the bundled CLI.
-///
-/// Dev builds (`is_dev = true`) use `"buzz-dev"` so that a running DMG and a
-/// concurrent dev build each own a separate link and never clobber each other —
-/// the same isolation that separates `~/.buzz` (prod) from `~/.buzz-dev` (dev).
-pub fn cli_link_name(is_dev: bool) -> &'static str {
-    if is_dev {
+/// Returns the isolated `~/.local/bin` link name for this app channel.
+pub fn cli_link_name(is_dev: bool, is_alpha: bool) -> &'static str {
+    if is_alpha {
+        "buzz-alpha"
+    } else if is_dev {
         "buzz-dev"
     } else {
         "buzz"
     }
 }
 
-/// Ensures `~/.local/bin/buzz` (prod) or `~/.local/bin/buzz-dev` (dev) is a
-/// symlink to the bundled CLI binary.
-///
-/// The link name is split by `is_dev` so that an installed DMG and a
-/// concurrently running dev build each maintain their own symlink and never
-/// overwrite each other's target — the same isolation that separates the
-/// `~/.buzz` and `~/.buzz-dev` nests (see [`NEST_DIR_DEV`]).
-///
 /// On every boot: replaces any existing symlink unconditionally (the `buzz` /
-/// `buzz-dev` name is our namespace), creates a new one if absent, and leaves
-/// regular files alone to avoid clobbering a user-compiled binary.
+/// `buzz-dev` / `buzz-alpha` name is our namespace), creates one if absent,
+/// and leaves regular files alone.
 ///
 /// Non-fatal: callers should ignore errors — the symlink is a convenience
 /// for human Terminal use; agents find the CLI via PATH augmentation.
 #[cfg(unix)]
-pub fn ensure_cli_symlink(exe_parent: &Path, is_dev: bool) -> Result<(), String> {
+pub fn ensure_cli_symlink(exe_parent: &Path, is_dev: bool, is_alpha: bool) -> Result<(), String> {
     let buzz_bin = exe_parent.join("buzz");
     if !buzz_bin.exists() {
         return Ok(()); // CLI not bundled (e.g., dev builds without sidecars).
@@ -373,7 +366,7 @@ pub fn ensure_cli_symlink(exe_parent: &Path, is_dev: bool) -> Result<(), String>
         .join("bin");
     fs::create_dir_all(&local_bin).map_err(|e| format!("create {}: {e}", local_bin.display()))?;
 
-    let link = local_bin.join(cli_link_name(is_dev));
+    let link = local_bin.join(cli_link_name(is_dev, is_alpha));
     match link.symlink_metadata() {
         Ok(meta) if meta.file_type().is_symlink() => {
             let _ = fs::remove_file(&link);
@@ -397,7 +390,11 @@ pub fn ensure_cli_symlink(exe_parent: &Path, is_dev: bool) -> Result<(), String>
 
 /// No-op on non-Unix platforms — symlink management is macOS/Linux only.
 #[cfg(not(unix))]
-pub fn ensure_cli_symlink(_exe_parent: &Path, _is_dev: bool) -> Result<(), String> {
+pub fn ensure_cli_symlink(
+    _exe_parent: &Path,
+    _is_dev: bool,
+    _is_alpha: bool,
+) -> Result<(), String> {
     Ok(())
 }
 
