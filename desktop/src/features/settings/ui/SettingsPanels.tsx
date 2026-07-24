@@ -4,6 +4,7 @@ import {
   Archive,
   BellRing,
   Bot,
+  Boxes,
   Check,
   ChevronDown,
   Cpu,
@@ -82,6 +83,7 @@ import { AgentDefaultsSettingsCard } from "./AgentDefaultsSettingsCard";
 import { HostedCommunitiesSettingsCard } from "./HostedCommunitiesSettingsCard";
 import { SettingsOptionGroup, SettingsOptionRow } from "./SettingsOptionGroup";
 import { ProfileSettingsCard } from "./ProfileSettingsCard";
+import { SpaceVisibilitySettingsCard } from "./SpaceVisibilitySettingsCard";
 import { UpdateChecker } from "../UpdateChecker";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 
@@ -90,6 +92,7 @@ export type SettingsSection =
   | "notifications"
   | "experimental"
   | "agents"
+  | "spaces"
   | "channel-templates"
   | "compute"
   | "appearance"
@@ -109,6 +112,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "notifications",
   "experimental",
   "agents",
+  "spaces",
   "channel-templates",
   "compute",
   "appearance",
@@ -178,6 +182,11 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     label: "Agents",
     icon: Bot,
     featureGate: "managed-agents",
+  },
+  {
+    value: "spaces",
+    label: "Spaces",
+    icon: Boxes,
   },
   {
     value: "channel-templates",
@@ -818,6 +827,10 @@ export function renderSettingsSection(
           <ActiveAgentCommunitiesSettingsCard />
           <AgentDefaultsSettingsCard />
         </div>
+      );
+    case "spaces":
+      return (
+        <SpaceVisibilitySettingsCard currentPubkey={props.currentPubkey} />
       );
     case "channel-templates":
       return <ChannelTemplatesSettingsCard />;

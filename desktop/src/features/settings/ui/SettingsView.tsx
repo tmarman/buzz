@@ -62,7 +62,12 @@ const settingsNavGroups: Array<{
   },
   {
     label: "Communities",
-    sections: ["hosted-communities", "channel-templates", "community-members"],
+    sections: [
+      "spaces",
+      "hosted-communities",
+      "channel-templates",
+      "community-members",
+    ],
   },
   {
     label: "App",

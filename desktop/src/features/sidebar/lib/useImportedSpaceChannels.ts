@@ -12,6 +12,10 @@ import {
 } from "@/features/sidebar/lib/channelSpaceStorage";
 import { initializeChannelSurfaces } from "@/features/sidebar/lib/channelSurfaceStorage";
 import {
+  getHiddenSpaceIdsSnapshot,
+  subscribeSpaceVisibility,
+} from "@/features/sidebar/lib/spaceVisibilityStorage";
+import {
   fetchInstalledSurfaceDescriptors,
   fetchVoxelboxSpaces,
   matchChannelToVoxelboxSpace,
@@ -37,6 +41,15 @@ export function useImportedSpaceChannels({
     queryFn: fetchVoxelboxSpaces,
     staleTime: 60_000,
   });
+  const hiddenSpaceIdsSnapshot = React.useSyncExternalStore(
+    subscribeSpaceVisibility,
+    () => getHiddenSpaceIdsSnapshot(currentPubkey ?? ""),
+    () => "[]",
+  );
+  const hiddenSpaceIds = React.useMemo(
+    () => new Set(JSON.parse(hiddenSpaceIdsSnapshot) as string[]),
+    [hiddenSpaceIdsSnapshot],
+  );
   const spaceByChannelId = React.useMemo(() => {
     const imported = new Map<string, string>();
     for (const channel of streamChannels) {
@@ -55,14 +68,23 @@ export function useImportedSpaceChannels({
   const importedSpaceChannels = React.useMemo(
     () =>
       sortChannelsForSidebar(
-        streamChannels.filter(
-          (channel) =>
-            importedSpaceChannelIds.has(channel.id) &&
-            !starredChannelIds?.has(channel.id),
-        ),
+        streamChannels.filter((channel) => {
+          const spaceId = spaceByChannelId.get(channel.id);
+          return (
+            spaceId !== undefined &&
+            !hiddenSpaceIds.has(spaceId) &&
+            !starredChannelIds?.has(channel.id)
+          );
+        }),
         sortMode,
       ),
-    [importedSpaceChannelIds, sortMode, starredChannelIds, streamChannels],
+    [
+      hiddenSpaceIds,
+      sortMode,
+      spaceByChannelId,
+      starredChannelIds,
+      streamChannels,
+    ],
   );
 
   React.useEffect(() => {
