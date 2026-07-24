@@ -73,8 +73,10 @@ import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { useThreadPanelWidth } from "@/shared/hooks/useThreadPanelWidth";
 import { AUXILIARY_PANEL_SINGLE_COLUMN_BREAKPOINT_PX } from "@/shared/layout/AuxiliaryPanel";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import { ChannelSurfacePane } from "./ChannelSurfacePane";
 import { useChannelActivityTyping } from "./useChannelActivityTyping";
 import { useChannelAgentSessions } from "./useChannelAgentSessions";
+import { useChannelSurfaceTab } from "./useChannelSurfaceTab";
 import { useMessageProfiles } from "./useMessageProfiles";
 import { useChannelPanelHistoryState } from "./useChannelPanelHistoryState";
 import { useChannelProfilePanel } from "./useChannelProfilePanel";
@@ -161,6 +163,10 @@ export function ChannelScreen({
   const mainInsetRef = useMainInsetRef();
   const currentPubkey = currentIdentity?.pubkey;
   const activeChannelId = activeChannel?.id ?? null;
+  const channelSurfaceTab = useChannelSurfaceTab({
+    channelId: activeChannelId,
+    pubkey: currentPubkey,
+  });
   const relaySelfPubkey = useRelaySelfQuery(activeChannel !== null).data;
   const effectiveOpenThreadHeadId =
     optimisticOpenThreadHeadId === undefined
@@ -768,11 +774,13 @@ export function ChannelScreen({
         onManageChannel={handleManageChannel}
         onToggleMembers={handleToggleMembers}
         showHeaderContent={!isSinglePanelView}
+        surfaceTab={channelSurfaceTab}
         transparentChrome={activeChannel?.channelType !== "forum"}
       />
     ),
     [
       activeChannel,
+      channelSurfaceTab,
       activeChannelEphemeralDisplay,
       activeChannelTitle,
       shouldCompactHeaderActions,
@@ -806,7 +814,12 @@ export function ChannelScreen({
           ref={channelContentRef}
         >
           {activeChannel ? (
-            activeChannel.channelType === "forum" ? (
+            channelSurfaceTab.isAppActive ? (
+              <>
+                {channelHeader}
+                <ChannelSurfacePane state={channelSurfaceTab.state} />
+              </>
+            ) : activeChannel.channelType === "forum" ? (
               <ForumChannelContent
                 canResetPanelWidth={canResetThreadPanelWidth}
                 channel={activeChannel}

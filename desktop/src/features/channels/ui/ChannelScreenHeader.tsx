@@ -1,7 +1,8 @@
-import { LogIn } from "lucide-react";
+import { AppWindow, LogIn } from "lucide-react";
 import type * as React from "react";
 
 import { ChatHeader } from "@/features/chat/ui/ChatHeader";
+import type { ChannelSurfaceTabHandle } from "@/features/channels/ui/useChannelSurfaceTab";
 import type { EphemeralChannelDisplay } from "@/features/channels/lib/ephemeralChannel";
 import type { ActiveDmHeaderParticipant } from "@/features/channels/useActiveChannelHeader";
 import { getChannelDescription } from "@/features/channels/lib/channelDescription";
@@ -36,6 +37,7 @@ type ChannelScreenHeaderProps = {
   isAddBotOpen?: boolean;
   isJoining?: boolean;
   showHeaderContent?: boolean;
+  surfaceTab?: ChannelSurfaceTabHandle;
   transparentChrome?: boolean;
   onAddBotOpenChange?: (open: boolean) => void;
   onJoinChannel?: () => Promise<void>;
@@ -61,6 +63,7 @@ export function ChannelScreenHeader({
   onJoinChannel,
   onManageChannel,
   onToggleMembers,
+  surfaceTab,
 }: ChannelScreenHeaderProps) {
   const isGroupDm =
     activeChannel?.channelType === "dm" &&
@@ -72,28 +75,43 @@ export function ChannelScreenHeader({
     !activeChannel.archivedAt &&
     onJoinChannel;
 
+  const surfaceTabButton = surfaceTab?.state.showTab ? (
+    <Button
+      aria-pressed={surfaceTab.isAppActive}
+      onClick={surfaceTab.toggle}
+      size="sm"
+      variant={surfaceTab.isAppActive ? "secondary" : "ghost"}
+    >
+      <AppWindow className="mr-1.5 h-4 w-4" />
+      App
+    </Button>
+  ) : null;
+
   const actions = activeChannel ? (
-    showJoinButton ? (
-      <Button
-        disabled={isJoining}
-        onClick={() => void onJoinChannel()}
-        size="sm"
-        variant="default"
-      >
-        <LogIn className="mr-1.5 h-4 w-4" />
-        {isJoining ? "Joining…" : "Join"}
-      </Button>
-    ) : (
-      <ChannelMembersBar
-        channel={activeChannel}
-        currentPubkey={currentPubkey}
-        isAddBotOpen={isAddBotOpen}
-        onAddBotOpenChange={onAddBotOpenChange}
-        onManageChannel={onManageChannel}
-        onToggleMembers={onToggleMembers}
-        variant={actionsVariant}
-      />
-    )
+    <div className="flex items-center gap-1">
+      {surfaceTabButton}
+      {showJoinButton ? (
+        <Button
+          disabled={isJoining}
+          onClick={() => void onJoinChannel()}
+          size="sm"
+          variant="default"
+        >
+          <LogIn className="mr-1.5 h-4 w-4" />
+          {isJoining ? "Joining…" : "Join"}
+        </Button>
+      ) : (
+        <ChannelMembersBar
+          channel={activeChannel}
+          currentPubkey={currentPubkey}
+          isAddBotOpen={isAddBotOpen}
+          onAddBotOpenChange={onAddBotOpenChange}
+          onManageChannel={onManageChannel}
+          onToggleMembers={onToggleMembers}
+          variant={actionsVariant}
+        />
+      )}
+    </div>
   ) : null;
 
   if (!showHeaderContent) {
