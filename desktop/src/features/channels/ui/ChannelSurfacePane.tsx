@@ -1,4 +1,6 @@
 import { SurfaceFrame } from "@/features/surfaces/ui/SurfaceFrame";
+import { channelChrome } from "@/shared/layout/chromeLayout";
+import { cn } from "@/shared/lib/cn";
 import type { ChannelSurfaceTabState } from "./useChannelSurfaceTab";
 
 /**
@@ -16,7 +18,13 @@ export function ChannelSurfacePane({
 }) {
   if (state.mode === "frame") {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          channelChrome.contentPadding,
+        )}
+        data-testid="channel-surface-pane"
+      >
         <SurfaceFrame
           embedded
           name={state.surface}
@@ -28,7 +36,10 @@ export function ChannelSurfacePane({
 
   return (
     <div
-      className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground"
+      className={cn(
+        "flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 px-8 pb-8 text-center text-muted-foreground",
+        channelChrome.contentPadding,
+      )}
       data-testid="channel-surface-empty"
     >
       <p className="font-medium text-foreground text-sm">App unavailable</p>

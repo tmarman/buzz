@@ -152,6 +152,10 @@ test("ChannelSurfacePane renders the sandboxed frame when mode is frame", () => 
     /sandbox="[^"]+"/,
     "the pane must render the sandboxed frame",
   );
+  assert.ok(
+    html.includes("pt-(--buzz-channel-content-top-padding,5.75rem)"),
+    "surface content must clear the measured overlaid channel header",
+  );
 });
 
 test("ChannelSurfacePane renders a neutral empty state with NO iframe when mode is empty", () => {
@@ -163,6 +167,10 @@ test("ChannelSurfacePane renders a neutral empty state with NO iframe when mode 
   assert.ok(
     !html.includes("<iframe"),
     "empty mode must NOT render an iframe (allowlist enforcement)",
+  );
+  assert.ok(
+    html.includes("pt-(--buzz-channel-content-top-padding,5.75rem)"),
+    "the unavailable state must align with the framed surface viewport",
   );
   assert.ok(html.length > 0, "empty state should still render some markup");
 });
