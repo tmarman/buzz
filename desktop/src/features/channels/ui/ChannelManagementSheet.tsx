@@ -84,6 +84,7 @@ import {
   ChannelManagementModerationActions,
   useChannelModerationCapabilities,
 } from "./ChannelManagementModerationActions";
+import { ChannelSurfacePickerSection } from "./ChannelSurfacePicker";
 import { writeTextToClipboard } from "@/shared/lib/clipboard";
 
 type ChannelManagementSheetProps = {
@@ -350,6 +351,7 @@ export function ChannelManagementSheet({
             canvasPreview={canvasPreview}
             canvasQuery={canvasQuery}
             channelId={channelId}
+            currentPubkey={currentPubkey}
             deleteChannelMutation={deleteChannelMutation}
             detailsError={detailsQuery.error}
             handleDeleteChannel={handleDeleteChannel}
@@ -396,6 +398,7 @@ export function ChannelManagementSheet({
               canvasPreview={canvasPreview}
               canvasQuery={canvasQuery}
               channelId={channelId}
+              currentPubkey={currentPubkey}
               deleteChannelMutation={deleteChannelMutation}
               detailsError={detailsQuery.error}
               handleDeleteChannel={handleDeleteChannel}
@@ -632,6 +635,7 @@ type ChannelManagementPanelContentProps = {
   canvasPreview?: string;
   canvasQuery: { isLoading: boolean };
   channelId: string | null;
+  currentPubkey?: string;
   deleteChannelMutation: ChannelMutation;
   detailsError: unknown;
   handleDeleteChannel: () => Promise<void>;
@@ -664,6 +668,7 @@ function ChannelManagementPanelContent({
   canvasPreview,
   canvasQuery,
   channelId,
+  currentPubkey,
   deleteChannelMutation,
   detailsError,
   handleDeleteChannel,
@@ -904,6 +909,13 @@ function ChannelManagementPanelContent({
                 />
               ) : null}
             </FieldGroup>
+
+            {currentPubkey && channelId ? (
+              <ChannelSurfacePickerSection
+                channelId={channelId}
+                pubkey={currentPubkey}
+              />
+            ) : null}
 
             {archiveChannelMutation.error instanceof Error ? (
               <p className="text-sm text-destructive">
