@@ -5,17 +5,25 @@ import { isTauri } from "@tauri-apps/api/core";
 
 import {
   fetchVoxelboxRemoteAgents,
-  importVoxelboxAgentIdentity,
   type VoxelboxRemoteAgent,
 } from "@/features/agents/lib/voxelboxAgentDiscovery";
+import { attachManagedAgentToChannel } from "@/features/agents/channelAgents";
 import {
   managedAgentsQueryKey,
   relayAgentsQueryKey,
 } from "@/features/agents/hooks";
 import { resolveManagedAgentAvatarUrl } from "@/features/agents/ui/managedAgentAvatar";
+import { useChannelsQuery } from "@/features/channels/hooks";
 import type { RelayAgent } from "@/shared/api/types";
-import { createManagedAgent, deleteManagedAgent } from "@/shared/api/tauri";
+import {
+  joinVoxelboxManagedAgent,
+  removeChannelMember,
+} from "@/shared/api/tauri";
 import { startManagedAgent } from "@/shared/api/tauriManagedAgents";
+import {
+  fetchVoxelboxSpaces,
+  matchChannelToVoxelboxSpace,
+} from "@/features/surfaces/lib/surfaceDiscovery";
 import { PresenceBadge } from "@/features/presence/ui/PresenceBadge";
 import {
   type Project,
@@ -126,6 +134,12 @@ export function RemoteAgentsSection({
     [relayAgents, normalizedManagedPubkeys],
   );
   const projectsQuery = useProjectsQuery();
+  const channelsQuery = useChannelsQuery();
+  const spacesQuery = useQuery({
+    queryKey: ["voxelbox-spaces"],
+    queryFn: fetchVoxelboxSpaces,
+    staleTime: 60_000,
+  });
   const projects = projectsQuery.data ?? [];
   const summariesQuery = useProjectActivitySummariesQuery(
     otherAgents.length > 0 ? projects : [],
@@ -139,9 +153,9 @@ export function RemoteAgentsSection({
   const availableVoxelboxAgents = React.useMemo(
     () =>
       (voxelboxAgentsQuery.data ?? [])
-        .filter((agent) => !isVoxelboxAgentJoined(agent, otherAgents))
+        .filter((agent) => !isVoxelboxAgentJoined(agent, relayAgents))
         .sort((left, right) => left.name.localeCompare(right.name)),
-    [otherAgents, voxelboxAgentsQuery.data],
+    [relayAgents, voxelboxAgentsQuery.data],
   );
   const joinMutation = useMutation({
     mutationFn: async (agent: VoxelboxRemoteAgent) => {
@@ -149,40 +163,60 @@ export function RemoteAgentsSection({
         throw new Error("Joining a Voxelbox agent requires the native app.");
       }
       const avatarUrl = await resolveManagedAgentAvatarUrl(agent.avatarUrl);
-      const created = await createManagedAgent({
-        name: agent.name,
-        acpCommand: "buzz-acp",
-        agentCommand: "voxelbox-agent",
-        harnessOverride: true,
-        systemPrompt: agent.description || undefined,
-        avatarUrl,
-        envVars: { VOXELBOX_STEWARD: agent.name },
-        spawnAfterCreate: false,
-        startOnAppLaunch: true,
-        backend: { type: "local" },
-        respondTo: "owner-only",
+      const joined = await joinVoxelboxManagedAgent(agent.name, avatarUrl);
+      const spaces = (spacesQuery.data ?? []).filter(
+        (space) =>
+          space.stewards.some(
+            (steward) =>
+              steward.toLocaleLowerCase() === agent.name.toLocaleLowerCase(),
+          ) || space.name.toLocaleLowerCase() === agent.org.toLocaleLowerCase(),
+      );
+      const targetChannels = (channelsQuery.data ?? []).filter((channel) => {
+        const space = matchChannelToVoxelboxSpace(
+          channel.name,
+          spacesQuery.data ?? [],
+        );
+        return (
+          space && spaces.some((candidate) => candidate.name === space.name)
+        );
       });
 
-      try {
-        if (!created.ownerAuthTag) {
-          throw new Error("Buzz did not return an owner attestation.");
-        }
-        await importVoxelboxAgentIdentity({
-          steward: agent.name,
-          nsec: created.privateKeyNsec,
-          ownerAuthTag: created.ownerAuthTag,
-          replaceExisting: agent.identityReady,
+      for (const channel of targetChannels) {
+        await attachManagedAgentToChannel(channel.id, {
+          agent: joined.agent,
+          role: "bot",
+          ensureRunning: false,
         });
-      } catch (error) {
-        await deleteManagedAgent(created.agent.pubkey, true).catch(() => {});
-        throw error;
+        const legacyAgents = relayAgents.filter(
+          (candidate) =>
+            candidate.name.trim().toLocaleLowerCase() ===
+              agent.name.toLocaleLowerCase() &&
+            normalizePubkey(candidate.pubkey) !==
+              normalizePubkey(joined.agent.pubkey) &&
+            channel.memberPubkeys.some(
+              (pubkey) =>
+                normalizePubkey(pubkey) === normalizePubkey(candidate.pubkey),
+            ),
+        );
+        await Promise.all(
+          legacyAgents.map((legacy) =>
+            removeChannelMember(channel.id, legacy.pubkey),
+          ),
+        );
       }
 
-      await startManagedAgent(created.agent.pubkey);
-      return created.agent;
+      await startManagedAgent(joined.agent.pubkey);
+      return {
+        agent: joined.agent,
+        channelNames: targetChannels.map((channel) => channel.name),
+      };
     },
-    onSuccess: async (agent) => {
-      setJoinNotice(`${agent.name} joined and is starting.`);
+    onSuccess: async ({ agent, channelNames }) => {
+      setJoinNotice(
+        channelNames.length > 0
+          ? `${agent.name} joined ${channelNames.join(", ")} and is starting.`
+          : `${agent.name} joined and is starting. No matching Space channel was found.`,
+      );
       setJoinTarget(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey }),
@@ -190,6 +224,7 @@ export function RemoteAgentsSection({
         queryClient.invalidateQueries({
           queryKey: ["voxelbox-remote-agents"],
         }),
+        channelsQuery.refetch(),
       ]);
     },
   });
@@ -322,8 +357,8 @@ export function RemoteAgentsSection({
               Join {joinTarget?.name ?? "Voxelbox agent"}
             </DialogTitle>
             <DialogDescription>
-              Buzz will create an owner-attested community identity, bind it to
-              this Voxelbox agent, and start its local runtime.
+              Buzz will adopt this Voxelbox agent’s real identity, add it to
+              matching Space channels, and start its conversation runtime.
             </DialogDescription>
           </DialogHeader>
 
@@ -336,16 +371,16 @@ export function RemoteAgentsSection({
                     remoteAgentProvenanceLabel(joinTarget.agentType)}
                 </p>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Initially responds only to you. Channel participation can be
-                  granted after enrollment.
+                  It responds only to you and cannot dispatch workspace work
+                  from this connection.
                 </p>
               </div>
 
               {joinTarget.identityReady ? (
                 <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-warning">
-                  This agent already has a local Buzz identity. Joining replaces
-                  it with the identity for this community; Foundry preserves a
-                  restricted backup for recovery.
+                  This agent’s existing Voxelbox identity will be adopted
+                  without changing its public key. A same-name legacy Buzz
+                  participant is removed from the matching Space channel.
                 </p>
               ) : null}
 

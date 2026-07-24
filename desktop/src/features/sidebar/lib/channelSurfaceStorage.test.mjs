@@ -18,7 +18,7 @@ import test from "node:test";
 //     removeChannelSurface(pubkey, channelId, surfaceName): boolean
 //     clearChannelSurface(pubkey, channelId): boolean
 //
-//   Store shape: { version: 2, channels: Record<string, string[]> }
+//   Store shape: { version: 3, channels: Record<string, string[]>, initializedChannels: string[] }
 //   Device-local ONLY — there is intentionally NO channelSurfaceSync.ts and no
 //   Nostr kind (the relay whitelists kinds and would reject it).
 import {
@@ -27,6 +27,7 @@ import {
   parseSurfacePayload,
   getChannelSurface,
   getChannelSurfaces,
+  initializeChannelSurfaces,
   removeChannelSurface,
   setChannelSurface,
   clearChannelSurface,
@@ -107,6 +108,15 @@ test("remove unpins only the selected surface", () => {
   assert.deepEqual(getChannelSurfaces(PUBKEY_A, "chan-1"), ["flow"]);
 });
 
+test("Space defaults initialize once and never fight explicit removal", () => {
+  installLocalStorage();
+  initializeChannelSurfaces(PUBKEY_A, "chan-1", ["home", "control"]);
+  assert.deepEqual(getChannelSurfaces(PUBKEY_A, "chan-1"), ["home", "control"]);
+  clearChannelSurface(PUBKEY_A, "chan-1");
+  initializeChannelSurfaces(PUBKEY_A, "chan-1", ["launcher"]);
+  assert.deepEqual(getChannelSurfaces(PUBKEY_A, "chan-1"), []);
+});
+
 test("get for an unknown channel returns undefined", () => {
   installLocalStorage();
   assert.equal(getChannelSurface(PUBKEY_A, "never-set"), undefined);
@@ -166,8 +176,9 @@ test("parseSurfacePayload: migrates a version 1 payload", () => {
     channels: { "chan-1": "agency", "chan-2": "notebook" },
   });
   assert.deepEqual(result, {
-    version: 2,
+    version: 3,
     channels: { "chan-1": ["agency"], "chan-2": ["notebook"] },
+    initializedChannels: ["chan-1", "chan-2"],
   });
 });
 
@@ -177,9 +188,25 @@ test("parseSurfacePayload: accepts ordered version 2 tabs", () => {
     channels: { "chan-1": ["control", "flow", "control", " "] },
   });
   assert.deepEqual(result, {
-    version: 2,
+    version: 3,
     channels: { "chan-1": ["control", "flow"] },
+    initializedChannels: ["chan-1"],
   });
+});
+
+test("parseSurfacePayload: accepts version 3 initialization markers", () => {
+  assert.deepEqual(
+    parseSurfacePayload({
+      version: 3,
+      channels: {},
+      initializedChannels: ["chan-1", "chan-1", " "],
+    }),
+    {
+      version: 3,
+      channels: {},
+      initializedChannels: ["chan-1"],
+    },
+  );
 });
 
 test("parseSurfacePayload: missing version returns null", () => {
@@ -188,7 +215,7 @@ test("parseSurfacePayload: missing version returns null", () => {
 
 test("parseSurfacePayload: wrong version returns null", () => {
   assert.equal(
-    parseSurfacePayload({ version: 3, channels: { "chan-1": ["agency"] } }),
+    parseSurfacePayload({ version: 4, channels: { "chan-1": ["agency"] } }),
     null,
   );
 });
@@ -211,19 +238,25 @@ test("parseSurfacePayload: invalid channel values are dropped", () => {
       "bool-value": true,
     },
   });
-  assert.deepEqual(result, { version: 2, channels: { valid: ["agency"] } });
+  assert.deepEqual(result, {
+    version: 3,
+    channels: { valid: ["agency"] },
+    initializedChannels: ["valid"],
+  });
 });
 
 test("parseSurfacePayload: empty channels returns store with empty channels", () => {
   assert.deepEqual(parseSurfacePayload({ version: 2, channels: {} }), {
-    version: 2,
+    version: 3,
     channels: {},
+    initializedChannels: [],
   });
 });
 
 test("parseSurfacePayload: version 2 with no channels key returns empty channels", () => {
   assert.deepEqual(parseSurfacePayload({ version: 2 }), {
-    version: 2,
+    version: 3,
     channels: {},
+    initializedChannels: [],
   });
 });

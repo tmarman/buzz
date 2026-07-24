@@ -1,11 +1,15 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use nostr::Keys;
+use nostr::{Keys, ToBech32};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
+use crate::managed_agents::{
+    BackendKind, CreateManagedAgentRequest, ManagedAgentSummary, RespondTo,
+};
 
 const SURFACE_DISCOVERY_URL: &str = "http://localhost:1337/surfaces/";
 const SURFACE_HELLO_URL: &str = "http://localhost:1337/api/hello";
@@ -23,6 +27,10 @@ struct InstalledSurface {
     description: String,
     #[serde(default)]
     steward: String,
+    #[serde(default)]
+    icon: String,
+    #[serde(default)]
+    category: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +48,15 @@ struct NegotiatedSurface {
     description: String,
     #[serde(default)]
     owner_agent: String,
-    render: Option<serde_json::Value>,
+    #[serde(default)]
+    icon: String,
+    render: Option<NegotiatedRender>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NegotiatedRender {
+    #[serde(default)]
+    category: String,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -50,14 +66,22 @@ pub struct LocalSurfaceDescriptor {
     space: String,
     description: String,
     owner_agent: String,
+    icon: String,
+    category: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VoxelboxSpaceSummary {
     name: String,
+    #[serde(default, alias = "display_name")]
+    display_name: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    stewards: Vec<String>,
+    #[serde(default)]
+    surfaces: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -94,6 +118,13 @@ pub struct VoxelboxEnrollmentResult {
     npub: String,
     pubkey: String,
     state: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinVoxelboxAgentResult {
+    agent: ManagedAgentSummary,
+    enrollment: VoxelboxEnrollmentResult,
 }
 
 /// Discover renderable surface descriptors through the native HTTP client.
@@ -232,6 +263,166 @@ pub async fn import_voxelbox_agent_identity(
 ) -> Result<VoxelboxEnrollmentResult, String> {
     let owner_auth_tag = serde_json::from_str::<serde_json::Value>(&owner_auth_tag)
         .map_err(|_| "owner auth tag is invalid".to_string())?;
+    enroll_voxelbox_agent(
+        state.inner(),
+        &steward,
+        &nsec,
+        owner_auth_tag,
+        replace_existing,
+    )
+    .await
+}
+
+/// Adopts a configured steward's existing identity into Buzz.
+///
+/// Private key material is read and used only inside the native process. When
+/// a steward does not have an identity yet, the same keypair is minted once,
+/// persisted by Foundry, and stored by Buzz as the managed-agent identity.
+#[tauri::command]
+pub async fn join_voxelbox_agent(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    steward: String,
+    avatar_url: Option<String>,
+) -> Result<JoinVoxelboxAgentResult, String> {
+    let steward = steward.trim().to_string();
+    if !is_safe_agent_name(&steward) {
+        return Err("invalid Voxelbox steward".to_string());
+    }
+
+    let response = state
+        .http_client
+        .get(STEWARD_DISCOVERY_URL)
+        .timeout(SURFACE_DISCOVERY_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| format!("Voxelbox agent discovery failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Voxelbox agent discovery returned HTTP {}",
+            response.status()
+        ));
+    }
+    let agents = response
+        .json::<Vec<VoxelboxAgentSummary>>()
+        .await
+        .map_err(|error| format!("Voxelbox agent discovery response was invalid: {error}"))?;
+    let agent = voxelbox_agent_summaries(agents)
+        .into_iter()
+        .find(|candidate| candidate.name == steward)
+        .ok_or_else(|| "unknown Voxelbox steward".to_string())?;
+    let agent = enrich_agent_identity(agent, &voxelbox_identity_root());
+
+    let nsec_path = voxelbox_identity_root()
+        .join("agents")
+        .join(&steward)
+        .join("identity")
+        .join("nostr")
+        .join("nsec");
+    let (keys, had_existing_identity) = match std::fs::read_to_string(&nsec_path) {
+        Ok(nsec) => (
+            Keys::parse(nsec.trim())
+                .map_err(|_| "stored Voxelbox identity is invalid".to_string())?,
+            true,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Keys::generate(), false),
+        Err(_) => return Err("could not read the Voxelbox identity".to_string()),
+    };
+    let nsec = keys
+        .secret_key()
+        .to_bech32()
+        .map_err(|error| format!("failed to encode Voxelbox identity: {error}"))?;
+
+    let mut env_vars = BTreeMap::new();
+    env_vars.insert("VOXELBOX_STEWARD".to_string(), steward.clone());
+    env_vars.insert("VOXELBOX_BUZZ_MODE".to_string(), "conversation".to_string());
+    let published_avatar_url = avatar_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or(agent.avatar_url);
+    let create_input = CreateManagedAgentRequest {
+        name: steward.clone(),
+        persona_id: None,
+        team_id: None,
+        relay_url: None,
+        acp_command: Some("buzz-acp".to_string()),
+        agent_command: Some("voxelbox-agent".to_string()),
+        harness_override: true,
+        agent_args: Vec::new(),
+        mcp_command: None,
+        turn_timeout_seconds: None,
+        idle_timeout_seconds: None,
+        max_turn_duration_seconds: None,
+        parallelism: None,
+        system_prompt: (!agent.description.is_empty()).then_some(agent.description),
+        avatar_url: published_avatar_url,
+        model: None,
+        provider: None,
+        env_vars,
+        spawn_after_create: false,
+        start_on_app_launch: true,
+        backend: BackendKind::Local,
+        respond_to: Some(RespondTo::OwnerOnly),
+        respond_to_allowlist: Vec::new(),
+        relay_mesh: None,
+    };
+
+    let created = crate::commands::agents::create_managed_agent_with_keys(
+        create_input,
+        app.clone(),
+        state.inner(),
+        Some(keys),
+    )
+    .await?;
+    let owner_auth_tag = created
+        .owner_auth_tag
+        .as_deref()
+        .ok_or_else(|| "Buzz did not create an owner attestation".to_string())
+        .and_then(|value| {
+            serde_json::from_str::<serde_json::Value>(value)
+                .map_err(|_| "Buzz created an invalid owner attestation".to_string())
+        });
+    let enrollment = match owner_auth_tag {
+        Ok(owner_auth_tag) => {
+            enroll_voxelbox_agent(
+                state.inner(),
+                &steward,
+                &nsec,
+                owner_auth_tag,
+                had_existing_identity,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    let enrollment = match enrollment {
+        Ok(enrollment) => enrollment,
+        Err(error) => {
+            let _ = crate::commands::agents::delete_managed_agent(
+                created.agent.pubkey.clone(),
+                Some(true),
+                app,
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
+    Ok(JoinVoxelboxAgentResult {
+        agent: created.agent,
+        enrollment,
+    })
+}
+
+async fn enroll_voxelbox_agent(
+    state: &AppState,
+    steward: &str,
+    nsec: &str,
+    owner_auth_tag: serde_json::Value,
+    replace_existing: bool,
+) -> Result<VoxelboxEnrollmentResult, String> {
     let response = state
         .http_client
         .post(AGENCY_ENROLLMENT_URL)
@@ -271,6 +462,8 @@ fn installed_surface_descriptors(surfaces: Vec<InstalledSurface>) -> Vec<LocalSu
                 space: explicit_surface_space(&surface.space),
                 description: surface.description.trim().to_string(),
                 owner_agent: surface.steward.trim().to_string(),
+                icon: surface.icon.trim().to_string(),
+                category: surface.category.trim().to_string(),
             })
         })
         .collect()
@@ -281,12 +474,23 @@ fn negotiated_surface_descriptors(surfaces: Vec<NegotiatedSurface>) -> Vec<Local
         .into_iter()
         .filter_map(|surface| {
             let name = surface.id.trim();
-            (!name.is_empty() && surface.render.is_some()).then(|| LocalSurfaceDescriptor {
-                name: name.to_string(),
-                space: explicit_surface_space(&surface.space),
-                description: surface.description.trim().to_string(),
-                owner_agent: surface.owner_agent.trim().to_string(),
-            })
+            let category = surface
+                .render
+                .as_ref()
+                .map(|render| render.category.trim().to_string())
+                .unwrap_or_default();
+            surface
+                .render
+                .is_some()
+                .then(|| LocalSurfaceDescriptor {
+                    name: name.to_string(),
+                    space: explicit_surface_space(&surface.space),
+                    description: surface.description.trim().to_string(),
+                    owner_agent: surface.owner_agent.trim().to_string(),
+                    icon: surface.icon.trim().to_string(),
+                    category,
+                })
+                .filter(|_| !name.is_empty())
         })
         .collect()
 }
@@ -319,7 +523,20 @@ fn voxelbox_space_summaries(spaces: Vec<VoxelboxSpaceSummary>) -> Vec<VoxelboxSp
         .into_iter()
         .filter_map(|mut space| {
             space.name = space.name.trim().to_string();
+            space.display_name = space.display_name.trim().to_string();
             space.description = space.description.trim().to_string();
+            space.stewards = space
+                .stewards
+                .into_iter()
+                .map(|steward| steward.trim().to_string())
+                .filter(|steward| !steward.is_empty())
+                .collect();
+            space.surfaces = space
+                .surfaces
+                .into_iter()
+                .map(|surface| surface.trim().to_string())
+                .filter(|surface| !surface.is_empty())
+                .collect();
             (!space.name.is_empty()).then_some(space)
         })
         .collect()
@@ -423,18 +640,24 @@ mod tests {
                 space: String::new(),
                 description: "Control plane".to_string(),
                 steward: "weaver".to_string(),
+                icon: "sliders-horizontal".to_string(),
+                category: "core".to_string(),
             },
             InstalledSurface {
                 name: "  ".to_string(),
                 space: "voxelbox-ai".to_string(),
                 description: String::new(),
                 steward: String::new(),
+                icon: String::new(),
+                category: String::new(),
             },
             InstalledSurface {
                 name: "flow".to_string(),
                 space: " tmarman ".to_string(),
                 description: String::new(),
                 steward: String::new(),
+                icon: String::new(),
+                category: String::new(),
             },
         ]);
 
@@ -446,12 +669,16 @@ mod tests {
                     space: "global".to_string(),
                     description: "Control plane".to_string(),
                     owner_agent: "weaver".to_string(),
+                    icon: "sliders-horizontal".to_string(),
+                    category: "core".to_string(),
                 },
                 LocalSurfaceDescriptor {
                     name: "flow".to_string(),
                     space: "tmarman".to_string(),
                     description: String::new(),
                     owner_agent: String::new(),
+                    icon: String::new(),
+                    category: String::new(),
                 }
             ]
         );
@@ -465,13 +692,17 @@ mod tests {
                 space: "global".to_string(),
                 description: "Control plane".to_string(),
                 owner_agent: "weaver".to_string(),
-                render: Some(serde_json::json!({"route": "/surfaces/control/"})),
+                icon: "sliders-horizontal".to_string(),
+                render: Some(NegotiatedRender {
+                    category: "core".to_string(),
+                }),
             },
             NegotiatedSurface {
                 id: "headless".to_string(),
                 space: "global".to_string(),
                 description: String::new(),
                 owner_agent: String::new(),
+                icon: String::new(),
                 render: None,
             },
         ]);

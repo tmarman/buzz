@@ -165,6 +165,16 @@ type RawCreateManagedAgentResponse = {
   spawn_error: string | null;
 };
 
+type RawJoinVoxelboxAgentResponse = {
+  agent: RawManagedAgent;
+  enrollment: {
+    steward: string;
+    npub: string;
+    pubkey: string;
+    state: string;
+  };
+};
+
 type RawManagedAgentLog = {
   content: string;
   log_path: string;
@@ -878,6 +888,20 @@ export async function createManagedAgent(input: CreateManagedAgentInput) {
     ownerAuthTag: response.owner_auth_tag ?? null,
     profileSyncError: response.profile_sync_error,
     spawnError: response.spawn_error,
+  };
+}
+
+export async function joinVoxelboxManagedAgent(
+  steward: string,
+  avatarUrl?: string,
+) {
+  const response = await invokeTauri<RawJoinVoxelboxAgentResponse>(
+    "join_voxelbox_agent",
+    { steward, avatarUrl },
+  );
+  return {
+    agent: fromRawManagedAgent(response.agent),
+    enrollment: response.enrollment,
   };
 }
 

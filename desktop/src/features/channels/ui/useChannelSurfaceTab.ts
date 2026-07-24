@@ -57,6 +57,7 @@ export type ChannelSurfaceTabHandle = {
   activeSurface: string | null;
   activeState: ChannelSurfaceTabState | null;
   isAppActive: boolean;
+  space: string | null;
   activate: (surface: string) => void;
   deactivate: () => void;
 };
@@ -157,6 +158,7 @@ export function useChannelSurfaceTab({
     activeSurface,
     activeState,
     isAppActive: activeState !== null,
+    space: selectedSpace,
     activate,
     deactivate,
   };

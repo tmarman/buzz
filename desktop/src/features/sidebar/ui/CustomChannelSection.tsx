@@ -373,6 +373,7 @@ export function ChannelGroupSection({
   onUnstarChannel,
   onDeleteChannel,
   onLeaveChannel,
+  importedSpaceChannelIds,
 }: {
   browseLabel?: string;
   createLabel?: string;
@@ -423,6 +424,7 @@ export function ChannelGroupSection({
   onUnstarChannel?: (channelId: string) => void;
   onDeleteChannel?: (channel: Channel) => void;
   onLeaveChannel?: (channel: Channel) => void;
+  importedSpaceChannelIds?: ReadonlySet<string>;
 }) {
   const contentId = `sidebar-${listTestId}`;
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
@@ -442,6 +444,7 @@ export function ChannelGroupSection({
                       hasUnread={unreadChannelIds.has(channel.id)}
                       unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
                       isMuted={mutedChannelIds?.has(channel.id)}
+                      isImportedSpace={importedSpaceChannelIds?.has(channel.id)}
                       isActive={
                         isActiveChannel && selectedChannelId === channel.id
                       }
@@ -455,6 +458,7 @@ export function ChannelGroupSection({
                     hasUnread={unreadChannelIds.has(channel.id)}
                     unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
                     isMuted={mutedChannelIds?.has(channel.id)}
+                    isImportedSpace={importedSpaceChannelIds?.has(channel.id)}
                     isActive={
                       isActiveChannel && selectedChannelId === channel.id
                     }

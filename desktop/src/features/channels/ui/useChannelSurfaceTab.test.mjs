@@ -29,6 +29,8 @@ const descriptor = (name) => ({
   space: "global",
   description: "",
   ownerAgent: "",
+  icon: "",
+  category: "",
 });
 const INSTALLED = [descriptor("agency"), descriptor("notebook")];
 

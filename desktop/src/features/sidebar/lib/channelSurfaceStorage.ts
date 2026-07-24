@@ -12,13 +12,15 @@ const STORAGE_KEY_PREFIX = "buzz-channel-surfaces.v1";
 export const CHANNEL_SURFACE_CHANGE_EVENT = "buzz:channel-surface-change";
 
 export type ChannelSurfaceStore = {
-  version: 2;
+  version: 3;
   channels: Record<string, string[]>;
+  initializedChannels: string[];
 };
 
 export const DEFAULT_STORE: ChannelSurfaceStore = Object.freeze({
-  version: 2,
+  version: 3,
   channels: {},
+  initializedChannels: [],
 });
 
 export function storageKey(pubkey: string): string {
@@ -28,7 +30,7 @@ export function storageKey(pubkey: string): string {
 export function parseSurfacePayload(json: unknown): ChannelSurfaceStore | null {
   if (typeof json !== "object" || json === null) return null;
   const obj = json as Record<string, unknown>;
-  if (obj.version !== 1 && obj.version !== 2) return null;
+  if (obj.version !== 1 && obj.version !== 2 && obj.version !== 3) return null;
   if (
     typeof obj.channels !== "object" ||
     obj.channels === null ||
@@ -55,7 +57,18 @@ export function parseSurfacePayload(json: unknown): ChannelSurfaceStore | null {
       },
     ),
   );
-  return { version: 2, channels };
+  const initializedChannels =
+    obj.version === 3 && Array.isArray(obj.initializedChannels)
+      ? [
+          ...new Set(
+            obj.initializedChannels.filter(
+              (channelId): channelId is string =>
+                typeof channelId === "string" && channelId.trim().length > 0,
+            ),
+          ),
+        ]
+      : Object.keys(channels);
+  return { version: 3, channels, initializedChannels };
 }
 
 function readChannelSurfaceStore(pubkey: string): ChannelSurfaceStore {
@@ -143,8 +156,35 @@ export function setChannelSurface(
 ): boolean {
   const store = readChannelSurfaceStore(pubkey);
   return writeChannelSurfaceStore(pubkey, {
-    version: 2,
+    version: 3,
     channels: { ...store.channels, [channelId]: [surfaceName] },
+    initializedChannels: [
+      ...new Set([...store.initializedChannels, channelId]),
+    ],
+  });
+}
+
+/**
+ * Applies Space-provided defaults once. A channel remains initialized even
+ * after the user removes every tab, so defaults never fight explicit choices.
+ */
+export function initializeChannelSurfaces(
+  pubkey: string,
+  channelId: string,
+  surfaceNames: readonly string[],
+): boolean {
+  const store = readChannelSurfaceStore(pubkey);
+  if (store.initializedChannels.includes(channelId)) return true;
+  const names = [
+    ...new Set(surfaceNames.map((name) => name.trim()).filter(Boolean)),
+  ];
+  return writeChannelSurfaceStore(pubkey, {
+    version: 3,
+    channels:
+      names.length > 0
+        ? { ...store.channels, [channelId]: names }
+        : store.channels,
+    initializedChannels: [...store.initializedChannels, channelId],
   });
 }
 
@@ -159,8 +199,11 @@ export function addChannelSurface(
   const current = store.channels[channelId] ?? [];
   if (current.includes(name)) return true;
   return writeChannelSurfaceStore(pubkey, {
-    version: 2,
+    version: 3,
     channels: { ...store.channels, [channelId]: [...current, name] },
+    initializedChannels: [
+      ...new Set([...store.initializedChannels, channelId]),
+    ],
   });
 }
 
@@ -175,11 +218,16 @@ export function removeChannelSurface(
   if (next.length === current.length) return true;
   if (next.length === 0) {
     const { [channelId]: _, ...channels } = store.channels;
-    return writeChannelSurfaceStore(pubkey, { version: 2, channels });
+    return writeChannelSurfaceStore(pubkey, {
+      version: 3,
+      channels,
+      initializedChannels: store.initializedChannels,
+    });
   }
   return writeChannelSurfaceStore(pubkey, {
-    version: 2,
+    version: 3,
     channels: { ...store.channels, [channelId]: next },
+    initializedChannels: store.initializedChannels,
   });
 }
 
@@ -190,5 +238,9 @@ export function clearChannelSurface(
   const store = readChannelSurfaceStore(pubkey);
   if (!Object.hasOwn(store.channels, channelId)) return true;
   const { [channelId]: _, ...channels } = store.channels;
-  return writeChannelSurfaceStore(pubkey, { version: 2, channels });
+  return writeChannelSurfaceStore(pubkey, {
+    version: 3,
+    channels,
+    initializedChannels: store.initializedChannels,
+  });
 }

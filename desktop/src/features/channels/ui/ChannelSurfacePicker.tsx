@@ -19,6 +19,7 @@ import {
   type InstalledSurfaceDescriptor,
   type VoxelboxSpaceSummary,
 } from "@/features/surfaces/lib/surfaceDiscovery";
+import { SurfaceIcon } from "@/features/surfaces/ui/SurfaceIcon";
 import { cn } from "@/shared/lib/cn";
 
 type ChannelSurfacePickerProps = {
@@ -32,11 +33,15 @@ type ChannelSurfacePickerProps = {
 
 function SurfaceOption({
   active,
+  description,
+  icon,
   label,
   onClick,
   testId,
 }: {
   active: boolean;
+  description?: string;
+  icon?: string;
   label: string;
   onClick: () => void;
   testId: string;
@@ -53,8 +58,17 @@ function SurfaceOption({
       onClick={onClick}
       type="button"
     >
-      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-        {label}
+      <SurfaceIcon
+        className="h-4 w-4 shrink-0 text-muted-foreground"
+        icon={icon}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-foreground">{label}</span>
+        {description ? (
+          <span className="block truncate text-2xs text-muted-foreground">
+            {description}
+          </span>
+        ) : null}
       </span>
       {active ? <Check className="h-4 w-4 shrink-0 text-foreground" /> : null}
     </button>
@@ -81,7 +95,7 @@ export function ChannelSurfacePicker({
       <label className="block space-y-1.5">
         <span className="flex items-center justify-between px-1">
           <span className="text-xs font-medium text-foreground">Space</span>
-          <span className="text-2xs text-muted-foreground">This device</span>
+          <span className="text-2xs text-muted-foreground">Voxelbox</span>
         </span>
         <select
           className="h-9 w-full rounded-xl border border-border bg-background px-3 text-sm text-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
@@ -92,7 +106,7 @@ export function ChannelSurfacePicker({
           <option value="">Global only</option>
           {spaces.map((space) => (
             <option key={space.name} value={space.name}>
-              {space.name}
+              {space.displayName || space.name}
             </option>
           ))}
         </select>
@@ -113,6 +127,8 @@ export function ChannelSurfacePicker({
           {eligibleSurfaces.map((surface) => (
             <SurfaceOption
               active={selectedSurfaces.includes(surface.name)}
+              description={surface.description}
+              icon={surface.icon || surface.name}
               key={surface.name}
               label={surface.name}
               onClick={() =>

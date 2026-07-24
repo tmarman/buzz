@@ -6,8 +6,8 @@ use crate::{
     managed_agents::{
         build_managed_agent_summary, current_instance_id, discover_provider_candidates,
         ensure_persona_is_active, find_managed_agent_mut, load_managed_agents, load_personas,
-        load_teams, managed_agent_avatar_url, managed_agents_base_dir, normalize_agent_args,
-        provider_deploy, resolve_provider_binary, save_managed_agents, start_managed_agent_process,
+        load_teams, managed_agents_base_dir, normalize_agent_args, provider_deploy,
+        resolve_provider_binary, save_managed_agents, start_managed_agent_process,
         stop_managed_agent_process, stop_managed_agent_workspace_pair,
         sync_managed_agent_processes, try_regenerate_nest, validate_provider_config, BackendKind,
         CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
@@ -17,6 +17,10 @@ use crate::{
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
 };
+
+#[path = "agents_create_helpers.rs"]
+mod create_helpers;
+use create_helpers::{normalize_relay_mesh, resolve_created_avatar_url, trim_to_optional_string};
 
 /// Read the workspace owner's pubkey hex from app state without holding the
 /// lock for longer than necessary. Used to populate `BUZZ_ACP_AGENT_OWNER`
@@ -243,51 +247,6 @@ pub(super) fn archive_managed_agent_pending(app: &AppHandle, state: &AppState, a
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-archive: {e}");
     }
-}
-
-fn normalize_relay_mesh(
-    config: Option<&RelayMeshConfig>,
-    backend: &BackendKind,
-) -> Result<Option<RelayMeshConfig>, String> {
-    let Some(config) = config else {
-        return Ok(None);
-    };
-
-    let model_ref = config.model_ref.trim();
-    if model_ref.is_empty() {
-        return Err("Buzz shared compute model is required".to_string());
-    }
-    if backend != &BackendKind::Local {
-        return Err("Buzz shared compute agents must use the local backend".to_string());
-    }
-
-    Ok(Some(RelayMeshConfig {
-        model_ref: model_ref.to_string(),
-    }))
-}
-
-fn trim_to_optional_string(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn resolve_created_avatar_url(
-    requested_avatar_url: Option<&str>,
-    persona_avatar_url: Option<String>,
-    agent_command: &str,
-) -> Option<String> {
-    requested_avatar_url
-        .and_then(trim_to_optional_string)
-        .or_else(|| {
-            persona_avatar_url
-                .as_deref()
-                .and_then(trim_to_optional_string)
-        })
-        .or_else(|| managed_agent_avatar_url(agent_command))
 }
 
 #[cfg(feature = "mesh-llm")]
@@ -561,6 +520,20 @@ pub async fn create_managed_agent(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CreateManagedAgentResponse, String> {
+    create_managed_agent_with_keys(input, app, state.inner(), None).await
+}
+
+/// Creates a managed agent while optionally adopting an existing keypair.
+///
+/// The public Tauri command always passes `None` and therefore mints a fresh
+/// Buzz identity. Fixed native integrations such as Voxelbox may supply keys
+/// without ever serializing the private key through the webview boundary.
+pub(crate) async fn create_managed_agent_with_keys(
+    input: CreateManagedAgentRequest,
+    app: AppHandle,
+    state: &AppState,
+    supplied_keys: Option<Keys>,
+) -> Result<CreateManagedAgentResponse, String> {
     let name = input.name.trim().to_string();
     if name.is_empty() {
         return Err("agent name is required".to_string());
@@ -623,7 +596,7 @@ pub async fn create_managed_agent(
             let personas = load_personas(&app)?;
             ensure_persona_is_active(&personas, persona_id)?;
         }
-        let keys = Keys::generate();
+        let keys = supplied_keys.unwrap_or_else(Keys::generate);
         let pubkey = keys.public_key().to_hex();
         if records.iter().any(|record| record.pubkey == pubkey) {
             return Err(format!("agent {pubkey} already exists"));

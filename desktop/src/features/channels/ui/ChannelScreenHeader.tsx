@@ -1,10 +1,4 @@
-import {
-  AppWindow,
-  LayoutGrid,
-  LogIn,
-  MessageSquare,
-  Pencil,
-} from "lucide-react";
+import { LayoutGrid, LogIn, MessageSquare, Pencil } from "lucide-react";
 import type * as React from "react";
 
 import { ChatHeader } from "@/features/chat/ui/ChatHeader";
@@ -16,6 +10,8 @@ import { getChannelDescription } from "@/features/channels/lib/channelDescriptio
 import { getDmParticipantPreview } from "@/features/channels/lib/dmParticipantDisplay";
 import { ChannelHeaderStatusBadge } from "@/features/channels/ui/ChannelHeaderStatusBadge";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
+import { ImportedSpaceIcon } from "@/features/channels/ui/ImportedSpaceIcon";
+import { SurfaceIcon } from "@/features/surfaces/ui/SurfaceIcon";
 import {
   DEFAULT_HOVER_PROFILE_STATUS_GEOMETRY,
   ProfileAvatarWithStatus,
@@ -114,7 +110,10 @@ export function ChannelScreenHeader({
               type="button"
               variant={active ? "secondary" : "ghost"}
             >
-              <AppWindow className="mr-1.5 h-4 w-4" />
+              <SurfaceIcon
+                className="mr-1.5 h-4 w-4"
+                icon={tab.mode === "frame" ? tab.descriptor.icon : tab.surface}
+              />
               {tab.surface}
             </Button>
           );
@@ -227,6 +226,11 @@ export function ChannelScreenHeader({
               testId="chat-header-dm-avatar"
             />
           )
+        ) : surfaceTab?.space ? (
+          <ImportedSpaceIcon
+            className="mr-1.5 h-5 w-5 text-primary"
+            isPrivate={activeChannel?.visibility === "private"}
+          />
         ) : undefined
       }
       statusBadge={

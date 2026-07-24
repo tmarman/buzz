@@ -29,6 +29,8 @@ const descriptor = (name) => ({
   space: "global",
   description: "",
   ownerAgent: "",
+  icon: "",
+  category: "",
 });
 const DISCOVERY = [descriptor("agency"), descriptor("notebook")];
 

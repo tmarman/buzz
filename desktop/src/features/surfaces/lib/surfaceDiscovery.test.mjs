@@ -19,6 +19,7 @@ import {
   fetchInstalledSurfaces,
   fetchVoxelboxSpaces,
   isSurfaceAllowed,
+  matchChannelToVoxelboxSpace,
 } from "./surfaceDiscovery.ts";
 
 const DISCOVERY_URL = "http://localhost:1337/surfaces/?scope=global";
@@ -149,18 +150,24 @@ test("surface descriptors normalize explicit and legacy Space scope", async () =
           space: "global",
           description: "Control plane",
           ownerAgent: "",
+          icon: "",
+          category: "",
         },
         {
           name: "scout",
           space: "voxelbox-ai",
           description: "",
           ownerAgent: "",
+          icon: "",
+          category: "",
         },
         {
           name: "flow",
           space: "global",
           description: "",
           ownerAgent: "",
+          icon: "",
+          category: "",
         },
       ]);
     },
@@ -188,11 +195,34 @@ test("surface discovery sends the requested Space scope to the daemon", async ()
             space: "voxelbox-ai",
             description: "",
             ownerAgent: "",
+            icon: "",
+            category: "",
           },
         ],
       );
     },
   );
+});
+
+test("channel labels match canonical Space IDs or display names exactly", () => {
+  const spaces = [
+    {
+      name: "voxelbox-ai",
+      displayName: "Voxelbox",
+      description: "",
+      stewards: ["smithy"],
+      surfaces: [],
+    },
+  ];
+  assert.equal(
+    matchChannelToVoxelboxSpace("Voxelbox", spaces)?.name,
+    "voxelbox-ai",
+  );
+  assert.equal(
+    matchChannelToVoxelboxSpace("voxelbox-ai", spaces)?.name,
+    "voxelbox-ai",
+  );
+  assert.equal(matchChannelToVoxelboxSpace("Voxelbox chat", spaces), undefined);
 });
 
 test("fetchInstalledSurfaces uses native IPC inside Tauri", async () => {
@@ -254,7 +284,10 @@ test("fetchVoxelboxSpaces strips private registry fields", async () => {
         JSON.stringify([
           {
             name: " voxelbox-ai ",
+            display_name: " Voxelbox ",
             description: " Agent OS ",
+            stewards: [" smithy ", "", 7],
+            surfaces: [" control "],
             workspace: "/private/path",
             tools: ["private"],
           },
@@ -265,7 +298,13 @@ test("fetchVoxelboxSpaces strips private registry fields", async () => {
     },
     async () => {
       assert.deepEqual(await fetchVoxelboxSpaces(), [
-        { name: "voxelbox-ai", description: "Agent OS" },
+        {
+          name: "voxelbox-ai",
+          displayName: "Voxelbox",
+          description: "Agent OS",
+          stewards: ["smithy"],
+          surfaces: ["control"],
+        },
       ]);
     },
   );

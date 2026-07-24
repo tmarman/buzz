@@ -20,6 +20,7 @@ import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurn
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
 import { getEphemeralChannelDisplay } from "@/features/channels/lib/ephemeralChannel";
 import { EphemeralChannelBadge } from "@/features/channels/ui/EphemeralChannelBadge";
+import { ImportedSpaceIcon } from "@/features/channels/ui/ImportedSpaceIcon";
 import {
   DEFAULT_HOVER_PROFILE_STATUS_GEOMETRY,
   ProfileAvatarWithStatus,
@@ -213,10 +214,12 @@ function SidebarChannelIcon({
   channel,
   dmParticipants,
   presenceStatus,
+  isImportedSpace = false,
 }: {
   channel: Channel;
   dmParticipants?: SidebarDmParticipant[];
   presenceStatus?: PresenceStatus;
+  isImportedSpace?: boolean;
 }) {
   if (channel.channelType === "dm") {
     return (
@@ -230,6 +233,15 @@ function SidebarChannelIcon({
             ? presenceStatus
             : undefined
         }
+      />
+    );
+  }
+
+  if (isImportedSpace) {
+    return (
+      <ImportedSpaceIcon
+        className="h-4 w-4 text-sidebar-foreground/80"
+        isPrivate={channel.visibility === "private"}
       />
     );
   }
@@ -255,6 +267,7 @@ export function ChannelMenuButton({
   isMuted,
   dmParticipants,
   presenceStatus,
+  isImportedSpace = false,
   onSelectChannel,
 }: {
   channel: Channel;
@@ -266,6 +279,7 @@ export function ChannelMenuButton({
   isMuted?: boolean;
   dmParticipants?: SidebarDmParticipant[];
   presenceStatus?: PresenceStatus;
+  isImportedSpace?: boolean;
   onSelectChannel: (channelId: string) => void;
 }) {
   const resolvedLabel = label ?? channel.name;
@@ -293,6 +307,7 @@ export function ChannelMenuButton({
         channel={channel}
         dmParticipants={dmParticipants}
         presenceStatus={presenceStatus}
+        isImportedSpace={isImportedSpace}
       />
       <span className="min-w-0 flex-1 truncate" data-sidebar-row-label>
         {resolvedLabel}

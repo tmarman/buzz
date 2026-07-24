@@ -57,6 +57,8 @@ const descriptor = (name, space = "global") => ({
   space,
   description: "",
   ownerAgent: "",
+  icon: "",
+  category: "",
 });
 
 // ── render: list discovered surfaces ──────────────────────────────────────────
@@ -142,7 +144,15 @@ test("Space filtering keeps global apps and the selected Space apps", () => {
         descriptor("control", "Voxelbox"),
         descriptor("finances", "Finances"),
       ],
-      spaces: [{ name: "Voxelbox", description: "" }],
+      spaces: [
+        {
+          name: "Voxelbox",
+          displayName: "Voxelbox",
+          description: "",
+          stewards: [],
+          surfaces: [],
+        },
+      ],
       selectedSpace: "Voxelbox",
       selectedSurfaces: [],
       onToggle: noop,

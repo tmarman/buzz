@@ -3,9 +3,7 @@ import * as React from "react";
 import { FeatureGate } from "@/shared/features";
 import { SidebarDndContext } from "@/features/sidebar/ui/SidebarDnd";
 
-import type { Community } from "@/features/communities/types";
 import { AddCommunityDialog } from "@/features/communities/ui/AddCommunityDialog";
-import type { AddCommunityPrefillRequest } from "@/features/communities/addCommunityPrefill";
 import { useIsMobile } from "@/shared/hooks/use-mobile";
 import { useDeferredLoad } from "@/shared/hooks/useDeferredStartup";
 import {
@@ -45,23 +43,17 @@ import {
 import { CreateChannelDialog } from "@/features/sidebar/ui/CreateChannelDialog";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { SidebarRelayConnectionCard } from "@/features/sidebar/ui/SidebarRelayConnectionCard";
-import type { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
+import type { AppSidebarProps } from "@/features/sidebar/ui/AppSidebar.types";
 import {
   SidebarLoadingContent,
   useSidebarLoadingShape,
 } from "@/features/sidebar/ui/sidebarLoadingSkeleton";
 import { useDeferredModalOpen } from "@/shared/ui/deferredModalOpen";
+import { useImportedSpaceChannels } from "@/features/sidebar/lib/useImportedSpaceChannels";
 import { SidebarUpdateCard } from "@/features/settings/SidebarUpdateCard";
 import { useUpdaterContext } from "@/features/settings/hooks/UpdaterProvider";
 import { shouldShowSidebarUpdateCard } from "@/features/settings/sidebarUpdateCardVisibility";
-import type {
-  Channel,
-  ChannelVisibility,
-  PresenceStatus,
-  Profile,
-  SearchHit,
-  UserStatus,
-} from "@/shared/api/types";
+import type { Channel, ChannelVisibility } from "@/shared/api/types";
 import {
   Sidebar,
   SidebarContent,
@@ -74,105 +66,12 @@ import {
 
 type CollapsibleSidebarGroup =
   | "starred"
+  | "spaces"
   | "channels"
   | "forums"
   | "directMessages";
 
 type CreateChannelKind = "stream" | "forum";
-
-type AppSidebarProps = {
-  addCommunityPrefill?: AddCommunityPrefillRequest | null;
-  activeCommunity: Community | null;
-  channels: Channel[];
-  currentPubkey?: string;
-  fallbackDisplayName?: string;
-  homeBadgeCount: number;
-  isAddCommunityOpen?: boolean;
-  isLoading: boolean;
-  isCreatingChannel: boolean;
-  isCreatingForum: boolean;
-  profile?: Profile;
-  relayConnectionCard: ReturnType<typeof useSidebarRelayConnectionCard>;
-  selfPresenceStatus: PresenceStatus;
-  errorMessage?: string;
-  selectedChannelId: string | null;
-  selectedView:
-    | "home"
-    | "channel"
-    | "messages"
-    | "agents"
-    | "workflows"
-    | "pulse"
-    | "surfaces"
-    | "projects";
-  unreadChannelCounts: ReadonlyMap<string, number>;
-  unreadChannelIds: ReadonlySet<string>;
-  communities: Community[];
-  onAddCommunity: (community: Community) => void;
-  onAddCommunityOpenChange?: (open: boolean) => void;
-  onCreateChannel: (input: {
-    name: string;
-    description?: string;
-    visibility: ChannelVisibility;
-    ttlSeconds?: number;
-    templateId?: string;
-  }) => Promise<void>;
-  onCreateForum: (input: {
-    name: string;
-    description?: string;
-    visibility: ChannelVisibility;
-    ttlSeconds?: number;
-    templateId?: string;
-  }) => Promise<void>;
-  onOpenAddCommunity: () => void;
-  onSendFeedback?: () => void;
-  onHideDm: (channelId: string) => void;
-  onMarkChannelUnread: (channelId: string) => void;
-  onMarkChannelRead: (
-    channelId: string,
-    lastMessageAt: string | null | undefined,
-  ) => void;
-  onMarkAllChannelsRead: () => void;
-  onBrowseChannels?: (onCreated?: (channelId: string) => void) => void;
-  onOpenDm: (input: { pubkeys: string[] }) => Promise<void>;
-  onUpdateCommunity: (
-    id: string,
-    updates: Partial<Pick<Community, "name" | "relayUrl" | "token">>,
-  ) => void;
-  onRemoveCommunity: (id: string) => void;
-  onCreateAgent: () => void;
-  onSelectAgents: () => void;
-  onSelectProjects: () => void;
-  onSelectPulse: () => void;
-  onSelectSurface: () => void;
-  onSelectWorkflows: () => void;
-  onSelectHome: () => void;
-  onSelectChannel: (channelId: string) => void;
-  onOpenSearchResult: (hit: SearchHit) => void;
-  /**
-   * Full channel set used for global search. Unlike `channels` (which is
-   * scoped to the viewer's joined sidebar list), this includes open channels
-   * the viewer hasn't joined, so search can surface them.
-   */
-  searchChannels: Channel[];
-  searchFocusRequest: number;
-  onSelectSettings: (section?: "profile" | "appearance") => void;
-  onSetPresenceStatus?: (status: "online" | "away" | "offline") => void;
-  onSetUserStatus: (text: string, emoji: string) => void;
-  onClearUserStatus: () => void;
-  onSwitchCommunity: (id: string) => void;
-  selfUserStatus?: UserStatus;
-  isPresencePending?: boolean;
-  onNewMessage: () => void;
-  isCreateChannelOpen?: boolean;
-  onCreateChannelOpenChange?: (open: boolean) => void;
-  mutedChannelIds?: ReadonlySet<string>;
-  onMuteChannel?: (channelId: string) => void;
-  onUnmuteChannel?: (channelId: string) => void;
-  starredChannelIds?: ReadonlySet<string>;
-  onStarChannel?: (channelId: string) => void;
-  onUnstarChannel?: (channelId: string) => void;
-};
 
 export function AppSidebar({
   addCommunityPrefill,
@@ -318,6 +217,7 @@ export function AppSidebar({
     Record<CollapsibleSidebarGroup, boolean>
   >({
     starred: false,
+    spaces: false,
     channels: false,
     forums: false,
     directMessages: false,
@@ -386,6 +286,13 @@ export function AppSidebar({
     () => channels.filter((channel) => channel.channelType === "stream"),
     [channels],
   );
+  const { importedSpaceChannelIds, importedSpaceChannels } =
+    useImportedSpaceChannels({
+      currentPubkey,
+      sortMode: sortModeFor("channels"),
+      starredChannelIds,
+      streamChannels,
+    });
 
   const sectionBuckets = React.useMemo(() => {
     const bySection: Record<string, Channel[]> = {};
@@ -394,6 +301,7 @@ export function AppSidebar({
 
     for (const channel of streamChannels) {
       if (starredChannelIds?.has(channel.id)) continue;
+      if (importedSpaceChannelIds.has(channel.id)) continue;
       const sectionId = channelAssignments[channel.id];
       if (sectionId && sectionIds.has(sectionId)) {
         if (!bySection[sectionId]) {
@@ -421,6 +329,7 @@ export function AppSidebar({
     channelSections,
     channelAssignments,
     starredChannelIds,
+    importedSpaceChannelIds,
     sortModeFor,
   ]);
 
@@ -619,6 +528,7 @@ export function AppSidebar({
                       isCollapsed={collapsedGroups.starred}
                       isActiveChannel={selectedView === "channel"}
                       activeWorkingByChannelId={activeWorkingByChannelId}
+                      importedSpaceChannelIds={importedSpaceChannelIds}
                       items={starredChannels}
                       sortMode={sortModeFor("starred")}
                       onSortModeChange={(mode) =>
@@ -637,6 +547,40 @@ export function AppSidebar({
                       onToggleCollapsed={() => toggleCollapsedGroup("starred")}
                       selectedChannelId={selectedChannelId}
                       title="Starred"
+                      unreadChannelCounts={unreadChannelCounts}
+                      unreadChannelIds={unreadChannelIds}
+                      mutedChannelIds={mutedChannelIds}
+                      onMuteChannel={onMuteChannel}
+                      onUnmuteChannel={onUnmuteChannel}
+                      starredChannelIds={starredChannelIds}
+                      onStarChannel={onStarChannel}
+                      onUnstarChannel={onUnstarChannel}
+                      onDeleteChannel={requestDeleteChannel}
+                      onLeaveChannel={requestLeaveChannel}
+                    />
+                  ) : null}
+                  {importedSpaceChannels.length > 0 ? (
+                    <ChannelGroupSection
+                      hasUnread={importedSpaceChannels.some((channel) =>
+                        unreadChannelIds.has(channel.id),
+                      )}
+                      isCollapsed={collapsedGroups.spaces}
+                      isActiveChannel={selectedView === "channel"}
+                      activeWorkingByChannelId={activeWorkingByChannelId}
+                      importedSpaceChannelIds={importedSpaceChannelIds}
+                      items={importedSpaceChannels}
+                      listTestId="spaces-list"
+                      onMarkAllRead={() => {
+                        for (const channel of importedSpaceChannels) {
+                          onMarkChannelRead(channel.id, channel.lastMessageAt);
+                        }
+                      }}
+                      onMarkChannelRead={onMarkChannelRead}
+                      onMarkChannelUnread={onMarkChannelUnread}
+                      onSelectChannel={onSelectChannel}
+                      onToggleCollapsed={() => toggleCollapsedGroup("spaces")}
+                      selectedChannelId={selectedChannelId}
+                      title="Spaces"
                       unreadChannelCounts={unreadChannelCounts}
                       unreadChannelIds={unreadChannelIds}
                       mutedChannelIds={mutedChannelIds}

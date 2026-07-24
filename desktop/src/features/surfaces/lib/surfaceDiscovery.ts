@@ -12,11 +12,16 @@ export type InstalledSurfaceDescriptor = {
   space: string;
   description: string;
   ownerAgent: string;
+  icon: string;
+  category: string;
 };
 
 export type VoxelboxSpaceSummary = {
   name: string;
+  displayName: string;
   description: string;
+  stewards: string[];
+  surfaces: string[];
 };
 
 function normalizeSurfaceDescriptors(
@@ -30,7 +35,16 @@ function normalizeSurfaceDescriptors(
     if (typeof surface === "string") {
       const name = surface.trim();
       return name
-        ? [{ name, space: "global", description: "", ownerAgent: "" }]
+        ? [
+            {
+              name,
+              space: "global",
+              description: "",
+              ownerAgent: "",
+              icon: "",
+              category: "",
+            },
+          ]
         : [];
     }
 
@@ -62,8 +76,11 @@ function normalizeSurfaceDescriptors(
           : typeof source.steward === "string"
             ? source.steward.trim()
             : "";
+    const icon = typeof source.icon === "string" ? source.icon.trim() : "";
+    const category =
+      typeof source.category === "string" ? source.category.trim() : "";
 
-    return [{ name, space, description, ownerAgent }];
+    return [{ name, space, description, ownerAgent, icon, category }];
   });
 }
 
@@ -130,11 +147,49 @@ export async function fetchVoxelboxSpaces(): Promise<VoxelboxSpaceSummary[]> {
       if (!name) return [];
       const description =
         typeof source.description === "string" ? source.description.trim() : "";
-      return [{ name, description }];
+      const displayName =
+        typeof source.displayName === "string"
+          ? source.displayName.trim()
+          : typeof source.display_name === "string"
+            ? source.display_name.trim()
+            : "";
+      const stewards = Array.isArray(source.stewards)
+        ? source.stewards.flatMap((steward) =>
+            typeof steward === "string" && steward.trim()
+              ? [steward.trim()]
+              : [],
+          )
+        : [];
+      const surfaces = Array.isArray(source.surfaces)
+        ? source.surfaces.flatMap((surface) =>
+            typeof surface === "string" && surface.trim()
+              ? [surface.trim()]
+              : [],
+          )
+        : [];
+      return [{ name, displayName, description, stewards, surfaces }];
     });
   } catch {
     return [];
   }
+}
+
+function normalizedSpaceLabel(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+/** Matches a Buzz channel to a canonical Voxelbox Space by exact public label. */
+export function matchChannelToVoxelboxSpace(
+  channelName: string,
+  spaces: readonly VoxelboxSpaceSummary[],
+): VoxelboxSpaceSummary | undefined {
+  const label = normalizedSpaceLabel(channelName);
+  if (!label) return undefined;
+  return spaces.find(
+    (space) =>
+      normalizedSpaceLabel(space.name) === label ||
+      normalizedSpaceLabel(space.displayName) === label,
+  );
 }
 
 /** Returns whether a discovered surface name is permitted for use. */
