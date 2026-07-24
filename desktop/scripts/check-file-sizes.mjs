@@ -413,7 +413,12 @@ const overrides = new Map([
   // useMessageProfiles.ts, ratcheting 1002 -> 972 (under the 1000 default;
   // entry kept as a ratchet). +7 rebase onto main (#1698 timeline-window
   // growth), 972 -> 979.
-  ["src/features/channels/ui/ChannelScreen.tsx", 979],
+  // channel-app-tab: +12 thin wiring for the channel-header app tab (hook call,
+  // surfaceTab header prop + dep, and the isAppActive body-swap branch). The
+  // feature's logic — discovery/allowlist, channel->surface mapping read, tab
+  // state machine, and the sandboxed pane render — lives in useChannelSurfaceTab.ts
+  // and ChannelSurfacePane.tsx, not here. 979 -> 992 (still under the 1000 gate).
+  ["src/features/channels/ui/ChannelScreen.tsx", 992],
   // forced-unread persistence: markChannelUnread now writes through to
   // forcedUnreadStore (localStorage) so the sidebar badge survives reload and
   // the rail observer can read it. Three clear points added (markChannelRead,
