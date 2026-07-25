@@ -2,6 +2,7 @@ import * as React from "react";
 
 import {
   getChannelSpace,
+  setChannelSpace,
   subscribeChannelSpace,
 } from "@/features/sidebar/lib/channelSpaceStorage";
 import {
@@ -10,7 +11,10 @@ import {
 } from "@/features/sidebar/lib/channelSurfaceStorage";
 import {
   fetchInstalledSurfaceDescriptors,
+  fetchVoxelboxSpaces,
   type InstalledSurfaceDescriptor,
+  matchChannelToVoxelboxSpace,
+  type VoxelboxSpaceSummary,
 } from "@/features/surfaces/lib/surfaceDiscovery";
 
 export type ChannelSurfaceTabState =
@@ -52,6 +56,27 @@ export function resolveChannelSurfaceTabs(
   });
 }
 
+/**
+ * An exact Voxelbox Space channel match is authoritative. This keeps imported
+ * Space channels scoped even after stale device-local state or a direct route
+ * bypasses the sidebar initialization effect. Ordinary Buzz channels retain
+ * their explicit association and are never matched heuristically.
+ */
+export function resolveChannelSpaceAssociation({
+  channelName,
+  discoveredSpaces,
+  storedSpace,
+}: {
+  channelName?: string | null;
+  discoveredSpaces: readonly VoxelboxSpaceSummary[];
+  storedSpace?: string | null;
+}): string | null {
+  const inferredSpace = channelName
+    ? matchChannelToVoxelboxSpace(channelName, discoveredSpaces)?.name
+    : undefined;
+  return inferredSpace ?? storedSpace ?? null;
+}
+
 export type ChannelSurfaceTabHandle = {
   tabs: ChannelSurfaceTabState[];
   activeSurface: string | null;
@@ -71,15 +96,20 @@ export type ChannelSurfaceTabHandle = {
  */
 export function useChannelSurfaceTab({
   channelId,
+  channelName,
   pubkey,
 }: {
   channelId: string | null;
+  channelName?: string | null;
   pubkey: string | null | undefined;
 }): ChannelSurfaceTabHandle {
   const [installedSurfaces, setInstalledSurfaces] = React.useState<
     InstalledSurfaceDescriptor[]
   >([]);
   const [activeSurface, setActiveSurface] = React.useState<string | null>(null);
+  const [discoveredSpaces, setDiscoveredSpaces] = React.useState<
+    VoxelboxSpaceSummary[]
+  >([]);
 
   // Reactive read of the mapping. useSyncExternalStore re-reads whenever the
   // storage module reports a set/clear, so clearing the mapping (in the picker)
@@ -97,15 +127,42 @@ export function useChannelSurfaceTab({
     () => JSON.parse(mappedSurfacesSerialized) as string[],
     [mappedSurfacesSerialized],
   );
-  const getSelectedSpace = React.useCallback((): string | null => {
+  const getStoredSpace = React.useCallback((): string | null => {
     if (!pubkey || !channelId) return null;
     return getChannelSpace(pubkey, channelId) ?? null;
   }, [pubkey, channelId]);
-  const selectedSpace = React.useSyncExternalStore(
+  const storedSpace = React.useSyncExternalStore(
     subscribeChannelSpace,
-    getSelectedSpace,
-    getSelectedSpace,
+    getStoredSpace,
+    getStoredSpace,
   );
+  const selectedSpace = resolveChannelSpaceAssociation({
+    channelName,
+    discoveredSpaces,
+    storedSpace,
+  });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void fetchVoxelboxSpaces().then((spaces) => {
+      if (!cancelled) setDiscoveredSpaces(spaces);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (
+      !pubkey ||
+      !channelId ||
+      !selectedSpace ||
+      selectedSpace === storedSpace
+    ) {
+      return;
+    }
+    setChannelSpace(pubkey, channelId, selectedSpace);
+  }, [channelId, pubkey, selectedSpace, storedSpace]);
 
   // Re-validate the allowlist whenever the mapping changes (and on mount). Any
   // discovery failure degrades to [] so the allowlist gate falls through to the

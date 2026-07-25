@@ -22,7 +22,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 //   ChannelSurfacePane({ state }) renders:
 //     mode "frame" -> the sandboxed SurfaceFrame (an <iframe> at the mapped URL)
 //     mode "empty" -> a neutral empty state with NO <iframe>
-import { resolveChannelSurfaceTabs } from "./useChannelSurfaceTab.ts";
+import {
+  resolveChannelSpaceAssociation,
+  resolveChannelSurfaceTabs,
+} from "./useChannelSurfaceTab.ts";
 import { ChannelSurfacePane } from "./ChannelSurfacePane.tsx";
 
 const descriptor = (name) => ({
@@ -39,6 +42,55 @@ const INSTALLED = [descriptor("agency"), descriptor("notebook")];
 
 test("no mapping → no app tabs", () => {
   assert.deepEqual(resolveChannelSurfaceTabs([], INSTALLED), []);
+});
+
+test("an imported Space channel is auto-associated by exact display name", () => {
+  assert.equal(
+    resolveChannelSpaceAssociation({
+      channelName: "Maverick",
+      discoveredSpaces: [
+        {
+          name: "flywithmaverick",
+          displayName: "Maverick",
+          description: "",
+          stewards: [],
+          surfaces: [],
+        },
+      ],
+      storedSpace: null,
+    }),
+    "flywithmaverick",
+  );
+});
+
+test("an exact imported Space match repairs stale local association", () => {
+  assert.equal(
+    resolveChannelSpaceAssociation({
+      channelName: "Maverick",
+      discoveredSpaces: [
+        {
+          name: "flywithmaverick",
+          displayName: "Maverick",
+          description: "",
+          stewards: [],
+          surfaces: [],
+        },
+      ],
+      storedSpace: "voxelbox-ai",
+    }),
+    "flywithmaverick",
+  );
+});
+
+test("ordinary Buzz channels retain their explicit Space association", () => {
+  assert.equal(
+    resolveChannelSpaceAssociation({
+      channelName: "shipping",
+      discoveredSpaces: [],
+      storedSpace: "voxelbox-ai",
+    }),
+    "voxelbox-ai",
+  );
 });
 
 test("mappings preserve order and discovered tabs show frames", () => {

@@ -164,6 +164,7 @@ export function ChannelScreen({
   const activeChannelId = activeChannel?.id ?? null;
   const channelSurfaceTab = useChannelSurfaceTab({
     channelId: activeChannelId,
+    channelName: activeChannel?.name,
     pubkey: currentPubkey,
   });
   const relaySelfPubkey = useRelaySelfQuery(activeChannel !== null).data;
@@ -717,7 +718,6 @@ export function ChannelScreen({
     resetKey: activeChannelId,
     enabled: !isSinglePanelView,
   });
-
   const handleManageChannel = React.useCallback(() => {
     if (activeChannel?.channelType === "forum") {
       openGlobalChannelManagement();
