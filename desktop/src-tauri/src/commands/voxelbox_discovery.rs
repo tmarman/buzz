@@ -17,6 +17,8 @@ const SURFACE_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 #[derive(Debug, Deserialize)]
 struct InstalledSurface {
     name: String,
+    #[serde(default, alias = "agencyId")]
+    agency_id: String,
     #[serde(default, alias = "org")]
     space: String,
     #[serde(default)]
@@ -31,6 +33,12 @@ struct InstalledSurface {
     placements: Vec<String>,
     #[serde(default)]
     requires_context: Vec<String>,
+    #[serde(default)]
+    route: String,
+    #[serde(default, alias = "sessionActions", alias = "interaction_actions")]
+    session_actions: Vec<String>,
+    #[serde(default)]
+    render: Option<NegotiatedRender>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +50,8 @@ struct SurfaceHandshake {
 #[derive(Debug, Deserialize)]
 struct NegotiatedSurface {
     id: String,
+    #[serde(default, alias = "agencyId")]
+    agency_id: String,
     #[serde(default)]
     space: String,
     #[serde(default)]
@@ -50,23 +60,33 @@ struct NegotiatedSurface {
     owner_agent: String,
     #[serde(default)]
     icon: String,
+    #[serde(default, alias = "sessionActions", alias = "interaction_actions")]
+    session_actions: Vec<String>,
     render: Option<NegotiatedRender>,
 }
 
 #[derive(Debug, Deserialize)]
 struct NegotiatedRender {
     #[serde(default)]
+    route: String,
+    #[serde(default)]
     category: String,
     #[serde(default)]
     placements: Vec<String>,
     #[serde(default)]
     requires_context: Vec<String>,
+    #[serde(default, alias = "sessionActions", alias = "interaction_actions")]
+    session_actions: Vec<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSurfaceDescriptor {
     name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    agency_id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    route: String,
     space: String,
     description: String,
     owner_agent: String,
@@ -74,12 +94,18 @@ pub struct LocalSurfaceDescriptor {
     category: String,
     placements: Vec<String>,
     requires_context: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    session_actions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VoxelboxSpaceSummary {
+    #[serde(default, skip_serializing)]
+    id: String,
     name: String,
+    #[serde(default, alias = "agencyId", skip_serializing_if = "String::is_empty")]
+    agency_id: String,
     #[serde(default, alias = "display_name")]
     display_name: String,
     #[serde(default)]
@@ -168,62 +194,73 @@ pub async fn discover_local_surfaces(
         }
     }
 
-    let response = state
-        .media_fetch_client
-        .get(agency_runtime_endpoint(&app, "/surfaces/")?)
-        .query(&[("scope", scope.as_str())])
-        .timeout(SURFACE_DISCOVERY_TIMEOUT)
-        .send()
-        .await
-        .map_err(|error| format!("surface discovery failed: {error}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "surface discovery returned HTTP {}",
-            response.status()
-        ));
+    let mut last_error = None;
+    for path in ["/api/surfaces/descriptors", "/surfaces/"] {
+        let response = match state
+            .media_fetch_client
+            .get(agency_runtime_endpoint(&app, path)?)
+            .query(&[("scope", scope.as_str())])
+            .timeout(SURFACE_DISCOVERY_TIMEOUT)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = Some(error.to_string());
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            last_error = Some(format!("HTTP {}", response.status()));
+            continue;
+        }
+        let payload = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("surface discovery response was invalid: {error}"))?;
+        let payload = payload.get("surfaces").cloned().unwrap_or(payload);
+        let surfaces = serde_json::from_value::<Vec<InstalledSurface>>(payload)
+            .map_err(|error| format!("surface discovery response was invalid: {error}"))?;
+        return Ok(installed_surface_descriptors(surfaces));
     }
-
-    let surfaces = response
-        .json::<Vec<InstalledSurface>>()
-        .await
-        .map_err(|error| format!("surface discovery response was invalid: {error}"))?;
-
-    Ok(installed_surface_descriptors(surfaces))
+    Err(format!(
+        "surface discovery failed: {}",
+        last_error.unwrap_or_else(|| "no compatible endpoint".to_string())
+    ))
 }
 
-/// Discover public Space names without returning local workspace paths, tools,
-/// subscriptions, or other operator-only registry fields.
+/// Discover public Space names without exposing operator-only registry fields.
 #[tauri::command]
 pub async fn discover_voxelbox_spaces(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<VoxelboxSpaceSummary>, String> {
-    let response = state
-        .media_fetch_client
-        .get(agency_runtime_endpoint(&app, "/api/spaces")?)
-        .timeout(SURFACE_DISCOVERY_TIMEOUT)
-        .send()
-        .await
-        .map_err(|error| format!("Voxelbox Space discovery failed: {error}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Voxelbox Space discovery returned HTTP {}",
-            response.status()
-        ));
+    for path in ["/api/agency/spaces", "/api/spaces"] {
+        let Ok(response) = state
+            .media_fetch_client
+            .get(agency_runtime_endpoint(&app, path)?)
+            .timeout(SURFACE_DISCOVERY_TIMEOUT)
+            .send()
+            .await
+        else {
+            continue;
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+        let payload = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("Agency Space discovery response was invalid: {error}"))?;
+        let payload = payload.get("spaces").cloned().unwrap_or(payload);
+        let spaces = serde_json::from_value::<Vec<VoxelboxSpaceSummary>>(payload)
+            .map_err(|error| format!("Agency Space discovery response was invalid: {error}"))?;
+        return Ok(voxelbox_space_summaries(spaces));
     }
-
-    let spaces = response
-        .json::<Vec<VoxelboxSpaceSummary>>()
-        .await
-        .map_err(|error| format!("Voxelbox Space discovery response was invalid: {error}"))?;
-
-    Ok(voxelbox_space_summaries(spaces))
+    Err("Agency Space discovery failed".to_string())
 }
 
 /// Discover configured Voxelbox agents without exposing local workspace paths.
-///
 /// These summaries describe agents available from the connected runtime; they
 /// do not claim relay membership or grant execution authority.
 #[tauri::command]
@@ -231,25 +268,32 @@ pub async fn discover_voxelbox_agents(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<VoxelboxAgentSummary>, String> {
-    let response = state
-        .media_fetch_client
-        .get(agency_runtime_endpoint(&app, "/api/stewards")?)
-        .timeout(SURFACE_DISCOVERY_TIMEOUT)
-        .send()
-        .await
-        .map_err(|error| format!("Voxelbox agent discovery failed: {error}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Voxelbox agent discovery returned HTTP {}",
-            response.status()
-        ));
+    let mut agents = None;
+    for path in ["/api/agency/agents", "/api/stewards"] {
+        let Ok(response) = state
+            .media_fetch_client
+            .get(agency_runtime_endpoint(&app, path)?)
+            .timeout(SURFACE_DISCOVERY_TIMEOUT)
+            .send()
+            .await
+        else {
+            continue;
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+        let payload = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| format!("Agency agent discovery response was invalid: {error}"))?;
+        let payload = payload.get("agents").cloned().unwrap_or(payload);
+        agents = Some(
+            serde_json::from_value::<Vec<VoxelboxAgentSummary>>(payload)
+                .map_err(|error| format!("Agency agent discovery response was invalid: {error}"))?,
+        );
+        break;
     }
-
-    let agents = response
-        .json::<Vec<VoxelboxAgentSummary>>()
-        .await
-        .map_err(|error| format!("Voxelbox agent discovery response was invalid: {error}"))?;
+    let agents = agents.ok_or_else(|| "Agency agent discovery failed".to_string())?;
 
     let identity_root = voxelbox_identity_root();
     Ok(voxelbox_agent_summaries(agents)
@@ -472,6 +516,16 @@ fn installed_surface_descriptors(surfaces: Vec<InstalledSurface>) -> Vec<LocalSu
             let name = surface.name.trim();
             (!name.is_empty()).then(|| LocalSurfaceDescriptor {
                 name: name.to_string(),
+                agency_id: surface.agency_id.trim().to_string(),
+                route: if surface.route.trim().is_empty() {
+                    surface
+                        .render
+                        .as_ref()
+                        .map(|render| render.route.trim().to_string())
+                        .unwrap_or_default()
+                } else {
+                    surface.route.trim().to_string()
+                },
                 space: explicit_surface_space(&surface.space),
                 description: surface.description.trim().to_string(),
                 owner_agent: surface.steward.trim().to_string(),
@@ -479,6 +533,15 @@ fn installed_surface_descriptors(surfaces: Vec<InstalledSurface>) -> Vec<LocalSu
                 category: surface.category.trim().to_string(),
                 placements: clean_surface_tokens(surface.placements),
                 requires_context: clean_surface_tokens(surface.requires_context),
+                session_actions: clean_surface_tokens(if surface.session_actions.is_empty() {
+                    surface
+                        .render
+                        .as_ref()
+                        .map(|render| render.session_actions.clone())
+                        .unwrap_or_default()
+                } else {
+                    surface.session_actions
+                }),
             })
         })
         .collect()
@@ -495,6 +558,8 @@ fn negotiated_surface_descriptors(surfaces: Vec<NegotiatedSurface>) -> Vec<Local
             let render = surface.render?;
             Some(LocalSurfaceDescriptor {
                 name: name.to_string(),
+                agency_id: surface.agency_id.trim().to_string(),
+                route: render.route.trim().to_string(),
                 space: explicit_surface_space(&surface.space),
                 description: surface.description.trim().to_string(),
                 owner_agent: surface.owner_agent.trim().to_string(),
@@ -502,6 +567,7 @@ fn negotiated_surface_descriptors(surfaces: Vec<NegotiatedSurface>) -> Vec<Local
                 category: render.category.trim().to_string(),
                 placements: clean_surface_tokens(render.placements),
                 requires_context: clean_surface_tokens(render.requires_context),
+                session_actions: clean_surface_tokens(render.session_actions),
             })
         })
         .collect()
@@ -544,8 +610,15 @@ fn voxelbox_space_summaries(spaces: Vec<VoxelboxSpaceSummary>) -> Vec<VoxelboxSp
     spaces
         .into_iter()
         .filter_map(|mut space| {
+            space.id = space.id.trim().to_string();
             space.name = space.name.trim().to_string();
             space.display_name = space.display_name.trim().to_string();
+            if !space.id.is_empty() {
+                if space.display_name.is_empty() {
+                    space.display_name = space.name.clone();
+                }
+                space.name = space.id.clone();
+            }
             space.description = space.description.trim().to_string();
             space.stewards = space
                 .stewards
@@ -659,6 +732,7 @@ mod tests {
         let surfaces = installed_surface_descriptors(vec![
             InstalledSurface {
                 name: "control".to_string(),
+                agency_id: String::new(),
                 space: String::new(),
                 description: "Control plane".to_string(),
                 steward: "weaver".to_string(),
@@ -666,9 +740,13 @@ mod tests {
                 category: "core".to_string(),
                 placements: vec!["channel_tab".to_string()],
                 requires_context: vec!["space".to_string()],
+                route: String::new(),
+                session_actions: Vec::new(),
+                render: None,
             },
             InstalledSurface {
                 name: "  ".to_string(),
+                agency_id: String::new(),
                 space: "voxelbox-ai".to_string(),
                 description: String::new(),
                 steward: String::new(),
@@ -676,9 +754,13 @@ mod tests {
                 category: String::new(),
                 placements: Vec::new(),
                 requires_context: Vec::new(),
+                route: String::new(),
+                session_actions: Vec::new(),
+                render: None,
             },
             InstalledSurface {
                 name: "flow".to_string(),
+                agency_id: String::new(),
                 space: " tmarman ".to_string(),
                 description: String::new(),
                 steward: String::new(),
@@ -686,6 +768,9 @@ mod tests {
                 category: String::new(),
                 placements: Vec::new(),
                 requires_context: Vec::new(),
+                route: String::new(),
+                session_actions: Vec::new(),
+                render: None,
             },
         ]);
 
@@ -694,6 +779,8 @@ mod tests {
             vec![
                 LocalSurfaceDescriptor {
                     name: "control".to_string(),
+                    agency_id: String::new(),
+                    route: String::new(),
                     space: "global".to_string(),
                     description: "Control plane".to_string(),
                     owner_agent: "weaver".to_string(),
@@ -701,9 +788,12 @@ mod tests {
                     category: "core".to_string(),
                     placements: vec!["channel_tab".to_string()],
                     requires_context: vec!["space".to_string()],
+                    session_actions: Vec::new(),
                 },
                 LocalSurfaceDescriptor {
                     name: "flow".to_string(),
+                    agency_id: String::new(),
+                    route: String::new(),
                     space: "tmarman".to_string(),
                     description: String::new(),
                     owner_agent: String::new(),
@@ -711,6 +801,7 @@ mod tests {
                     category: String::new(),
                     placements: Vec::new(),
                     requires_context: Vec::new(),
+                    session_actions: Vec::new(),
                 }
             ]
         );
@@ -721,28 +812,99 @@ mod tests {
         let surfaces = negotiated_surface_descriptors(vec![
             NegotiatedSurface {
                 id: "control".to_string(),
+                agency_id: String::new(),
                 space: "global".to_string(),
                 description: "Control plane".to_string(),
                 owner_agent: "weaver".to_string(),
                 icon: "sliders-horizontal".to_string(),
+                session_actions: Vec::new(),
                 render: Some(NegotiatedRender {
+                    route: String::new(),
                     category: "core".to_string(),
                     placements: vec!["channel_tab".to_string()],
                     requires_context: vec!["space".to_string()],
+                    session_actions: Vec::new(),
                 }),
             },
             NegotiatedSurface {
                 id: "headless".to_string(),
+                agency_id: String::new(),
                 space: "global".to_string(),
                 description: String::new(),
                 owner_agent: String::new(),
                 icon: String::new(),
+                session_actions: Vec::new(),
                 render: None,
             },
         ]);
 
         assert_eq!(surfaces.len(), 1);
         assert_eq!(surfaces[0].name, "control");
+    }
+
+    #[test]
+    fn negotiated_surface_preserves_provider_route_and_session_actions() {
+        let surfaces = negotiated_surface_descriptors(vec![NegotiatedSurface {
+            id: "board".to_string(),
+            agency_id: "foundry".to_string(),
+            space: "voxelbox-ai".to_string(),
+            description: String::new(),
+            owner_agent: String::new(),
+            icon: String::new(),
+            render: Some(NegotiatedRender {
+                route: "/surfaces/voxelbox-ai/board/".to_string(),
+                category: String::new(),
+                placements: vec!["channel_tab".to_string()],
+                requires_context: vec!["space".to_string()],
+                session_actions: vec!["task.create".to_string(), "task.update".to_string()],
+            }),
+            session_actions: Vec::new(),
+        }]);
+
+        assert_eq!(surfaces[0].agency_id, "foundry");
+        assert_eq!(surfaces[0].route, "/surfaces/voxelbox-ai/board/");
+        assert_eq!(
+            surfaces[0].session_actions,
+            vec!["task.create", "task.update"]
+        );
+    }
+
+    #[test]
+    fn agency_space_uses_canonical_id_and_keeps_display_name() {
+        let spaces = voxelbox_space_summaries(vec![VoxelboxSpaceSummary {
+            id: "flywithmaverick".to_string(),
+            name: "Maverick".to_string(),
+            agency_id: String::new(),
+            display_name: String::new(),
+            description: String::new(),
+            stewards: Vec::new(),
+            surfaces: vec!["board".to_string()],
+        }]);
+
+        assert_eq!(spaces[0].name, "flywithmaverick");
+        assert_eq!(spaces[0].display_name, "Maverick");
+    }
+
+    #[test]
+    fn installed_surface_preserves_flat_provider_fields() {
+        let surfaces = installed_surface_descriptors(vec![InstalledSurface {
+            name: "board".to_string(),
+            agency_id: "foundry".to_string(),
+            space: "voxelbox-ai".to_string(),
+            description: String::new(),
+            steward: String::new(),
+            icon: String::new(),
+            category: String::new(),
+            placements: Vec::new(),
+            requires_context: Vec::new(),
+            route: "/surfaces/voxelbox-ai/board/".to_string(),
+            session_actions: vec!["task.update".to_string()],
+            render: None,
+        }]);
+
+        assert_eq!(surfaces[0].agency_id, "foundry");
+        assert_eq!(surfaces[0].route, "/surfaces/voxelbox-ai/board/");
+        assert_eq!(surfaces[0].session_actions, vec!["task.update"]);
     }
 
     #[test]

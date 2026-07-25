@@ -371,8 +371,8 @@ export function RemoteAgentsSection({
                     remoteAgentProvenanceLabel(joinTarget.agentType)}
                 </p>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  It responds only to you and cannot dispatch workspace work
-                  from this connection.
+                  It responds only to you and agents you manage. This
+                  conversation-only connection cannot dispatch workspace work.
                 </p>
               </div>
 

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { isTauri } from "@tauri-apps/api/core";
 
 import {
   AGENCY_RUNTIME_CONFIG_QUERY_KEY,
@@ -11,8 +12,10 @@ import {
   buildSurfaceHostContext,
   isSurfaceReadyMessage,
   postSurfaceHostContext,
+  postSurfaceHostSession,
   postSurfaceHostTheme,
 } from "@/features/surfaces/lib/surfaceHostBridge";
+import { invokeTauri } from "@/shared/api/tauri";
 
 export const SURFACE_BASE_URL = "http://localhost:1337/surfaces/";
 
@@ -45,19 +48,38 @@ export function buildSurfaceUrl({
   baseUrl = DEFAULT_AGENCY_RUNTIME_CONFIG.baseUrl,
   embedded = false,
   name,
+  route,
   scope = "global",
 }: {
   baseUrl?: string;
   embedded?: boolean;
   name: string;
+  route?: string;
   scope?: SurfaceScope;
 }) {
-  const url = new URL(
-    agencyRuntimeEndpoint(
-      { baseUrl },
-      `/surfaces/${encodeURIComponent(name)}/`,
-    ),
-  );
+  const runtimeUrl = new URL(baseUrl);
+  let url: URL;
+  try {
+    const candidate = route ? new URL(route, runtimeUrl) : null;
+    url =
+      candidate &&
+      candidate.origin === runtimeUrl.origin &&
+      candidate.pathname.startsWith("/surfaces/")
+        ? candidate
+        : new URL(
+            agencyRuntimeEndpoint(
+              { baseUrl },
+              `/surfaces/${encodeURIComponent(name)}/`,
+            ),
+          );
+  } catch {
+    url = new URL(
+      agencyRuntimeEndpoint(
+        { baseUrl },
+        `/surfaces/${encodeURIComponent(name)}/`,
+      ),
+    );
+  }
   if (embedded) {
     url.searchParams.set("embedded", "1");
   }
@@ -69,15 +91,23 @@ export function SurfaceFrame({
   embedded = false,
   channelId,
   communityId,
+  agencyId,
   name,
+  route,
   projectRef,
+  sessionActions = [],
+  surfaceId,
   scope = "global",
 }: {
   embedded?: boolean;
   channelId?: string;
   communityId?: string;
+  agencyId?: string;
   name: string;
+  route?: string;
   projectRef?: string;
+  sessionActions?: string[];
+  surfaceId?: string;
   scope?: SurfaceScope;
 }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
@@ -92,6 +122,7 @@ export function SurfaceFrame({
     baseUrl: runtime.baseUrl,
     embedded,
     name,
+    route,
     scope,
   });
   const space = scope.startsWith("space:")
@@ -100,14 +131,60 @@ export function SurfaceFrame({
   const hostContext = React.useMemo(
     () =>
       buildSurfaceHostContext({
+        agencyId,
         channelId,
         communityId,
         embedded,
         projectRef,
+        surfaceId: surfaceId ?? name,
         space,
       }),
-    [channelId, communityId, embedded, projectRef, space],
+    [
+      agencyId,
+      channelId,
+      communityId,
+      embedded,
+      projectRef,
+      space,
+      surfaceId,
+      name,
+    ],
   );
+  const [session, setSession] = React.useState<{
+    token: string;
+    expiresAt?: string;
+    actions: string[];
+  } | null>(null);
+  const readyRef = React.useRef(false);
+
+  React.useEffect(() => {
+    setSession(null);
+    if (!isTauri() || sessionActions.length === 0) return;
+    let cancelled = false;
+    void invokeTauri<{
+      token: string;
+      expiresAt?: string;
+      actions: string[];
+    }>("mint_surface_session", {
+      request: {
+        agencyId: agencyId ?? "",
+        surfaceId: surfaceId ?? name,
+        space,
+        projectRef,
+        actions: sessionActions,
+      },
+    })
+      .then((value) => {
+        if (!cancelled) setSession(value);
+      })
+      .catch(() => {
+        // A provider may require enrollment/auth not available to the shell;
+        // keep the mounted surface read-only rather than exposing credentials.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agencyId, name, projectRef, sessionActions, space, surfaceId]);
 
   React.useEffect(() => {
     const root = document.documentElement;
@@ -133,17 +210,49 @@ export function SurfaceFrame({
       }
       postSurfaceHostContext(frame, hostContext, runtimeOrigin);
       postSurfaceHostTheme(frame, runtimeOrigin);
+      if (session) {
+        postSurfaceHostSession(
+          frame,
+          {
+            type: "agency.surface.session",
+            protocol: "agency.ui.v1",
+            token: session.token,
+            ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+            actions: session.actions,
+          },
+          runtimeOrigin,
+        );
+      }
+      readyRef.current = true;
     }
 
     window.addEventListener("message", handleSurfaceReady);
     return () => window.removeEventListener("message", handleSurfaceReady);
-  }, [hostContext, runtimeOrigin]);
+  }, [hostContext, runtimeOrigin, session]);
+
+  React.useEffect(() => {
+    if (!readyRef.current || !session) return;
+    postSurfaceHostSession(
+      frameRef.current,
+      {
+        type: "agency.surface.session",
+        protocol: "agency.ui.v1",
+        token: session.token,
+        ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        actions: session.actions,
+      },
+      runtimeOrigin,
+    );
+  }, [runtimeOrigin, session]);
 
   return (
     <iframe
       allow="clipboard-write; microphone"
       className="min-h-0 w-full flex-1 border-0"
-      onLoad={() => postSurfaceHostTheme(frameRef.current, runtimeOrigin)}
+      onLoad={() => {
+        readyRef.current = false;
+        postSurfaceHostTheme(frameRef.current, runtimeOrigin);
+      }}
       ref={frameRef}
       sandbox={SURFACE_SANDBOX}
       src={src}

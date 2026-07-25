@@ -10,22 +10,22 @@ import {
 import {
   clearChannelSpace,
   getChannelSpace,
-  setChannelSpace,
+  setChannelAgencyScope,
   subscribeChannelSpace,
 } from "@/features/sidebar/lib/channelSpaceStorage";
 import {
   fetchInstalledSurfaceDescriptors,
-  fetchVoxelboxSpaces,
+  fetchAgencySpaces,
   isSurfaceEligibleForPlacement,
   type InstalledSurfaceDescriptor,
-  type VoxelboxSpaceSummary,
+  type AgencySpaceSummary,
 } from "@/features/surfaces/lib/surfaceDiscovery";
 import { SurfaceIcon } from "@/features/surfaces/ui/SurfaceIcon";
 import { cn } from "@/shared/lib/cn";
 
 type ChannelSurfacePickerProps = {
   surfaces: InstalledSurfaceDescriptor[];
-  spaces: VoxelboxSpaceSummary[];
+  spaces: AgencySpaceSummary[];
   selectedSpace: string | null;
   selectedSurfaces: readonly string[];
   onSpaceChange: (space: string | null) => void;
@@ -102,7 +102,7 @@ export function ChannelSurfacePicker({
       <label className="block space-y-1.5">
         <span className="flex items-center justify-between px-1">
           <span className="text-xs font-medium text-foreground">Space</span>
-          <span className="text-2xs text-muted-foreground">Voxelbox</span>
+          <span className="text-2xs text-muted-foreground">Agency</span>
         </span>
         <select
           className="h-9 w-full rounded-xl border border-border bg-background px-3 text-sm text-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
@@ -176,7 +176,7 @@ export function ChannelSurfacePickerSection({
   const [surfaces, setSurfaces] = React.useState<InstalledSurfaceDescriptor[]>(
     [],
   );
-  const [spaces, setSpaces] = React.useState<VoxelboxSpaceSummary[]>([]);
+  const [spaces, setSpaces] = React.useState<AgencySpaceSummary[]>([]);
 
   const getSelectedSerialized = React.useCallback(
     (): string => JSON.stringify(getChannelSurfaces(pubkey, channelId)),
@@ -209,7 +209,7 @@ export function ChannelSurfacePickerSection({
       : ("global" as const);
     void Promise.all([
       fetchInstalledSurfaceDescriptors(scope),
-      fetchVoxelboxSpaces(),
+      fetchAgencySpaces(),
     ]).then(([descriptors, discoveredSpaces]) => {
       if (!active) return;
       setSurfaces(descriptors);
@@ -230,7 +230,11 @@ export function ChannelSurfacePickerSection({
 
   function handleSpaceChange(space: string | null) {
     if (space) {
-      setChannelSpace(pubkey, channelId, space);
+      const agency = spaces.find((candidate) => candidate.name === space);
+      setChannelAgencyScope(pubkey, channelId, {
+        agencyId: agency?.agencyId ?? "",
+        space,
+      });
     } else {
       clearChannelSpace(pubkey, channelId);
     }

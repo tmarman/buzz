@@ -8,7 +8,7 @@ import {
 } from "@/features/sidebar/lib/channelSortPreference";
 import {
   getChannelSpace,
-  setChannelSpace,
+  setChannelAgencyScope,
 } from "@/features/sidebar/lib/channelSpaceStorage";
 import { initializeChannelSurfaces } from "@/features/sidebar/lib/channelSurfaceStorage";
 import {
@@ -17,8 +17,9 @@ import {
 } from "@/features/sidebar/lib/spaceVisibilityStorage";
 import {
   fetchInstalledSurfaceDescriptors,
-  fetchVoxelboxSpaces,
-  matchChannelToVoxelboxSpace,
+  fetchAgencySpaces,
+  matchChannelToAgencySpace,
+  isSurfaceEligibleForPlacement,
 } from "@/features/surfaces/lib/surfaceDiscovery";
 
 export function useImportedSpaceChannels({
@@ -38,7 +39,7 @@ export function useImportedSpaceChannels({
   const spacesQuery = useQuery({
     enabled: Boolean(currentPubkey),
     queryKey: ["voxelbox-spaces"],
-    queryFn: fetchVoxelboxSpaces,
+    queryFn: fetchAgencySpaces,
     staleTime: 60_000,
   });
   const hiddenSpaceIdsSnapshot = React.useSyncExternalStore(
@@ -51,13 +52,16 @@ export function useImportedSpaceChannels({
     [hiddenSpaceIdsSnapshot],
   );
   const spaceByChannelId = React.useMemo(() => {
-    const imported = new Map<string, string>();
+    const imported = new Map<
+      string,
+      ReturnType<typeof matchChannelToAgencySpace>
+    >();
     for (const channel of streamChannels) {
-      const space = matchChannelToVoxelboxSpace(
+      const space = matchChannelToAgencySpace(
         channel.name,
         spacesQuery.data ?? [],
       );
-      if (space) imported.set(channel.id, space.name);
+      if (space) imported.set(channel.id, space);
     }
     return imported;
   }, [spacesQuery.data, streamChannels]);
@@ -69,7 +73,7 @@ export function useImportedSpaceChannels({
     () =>
       sortChannelsForSidebar(
         streamChannels.filter((channel) => {
-          const spaceId = spaceByChannelId.get(channel.id);
+          const spaceId = spaceByChannelId.get(channel.id)?.name;
           return (
             spaceId !== undefined &&
             !hiddenSpaceIds.has(spaceId) &&
@@ -91,12 +95,16 @@ export function useImportedSpaceChannels({
     if (!currentPubkey) return;
     let cancelled = false;
     void Promise.all(
-      [...spaceByChannelId].map(async ([channelId, spaceName]) => {
+      [...spaceByChannelId].map(async ([channelId, space]) => {
         if (!getChannelSpace(currentPubkey, channelId)) {
-          setChannelSpace(currentPubkey, channelId, spaceName);
+          setChannelAgencyScope(currentPubkey, channelId, {
+            agencyId: space?.agencyId ?? "",
+            space: space?.name ?? "",
+          });
         }
+        if (!space) return;
         const descriptors = await fetchInstalledSurfaceDescriptors(
-          `space:${spaceName}`,
+          `space:${space.name}`,
         );
         if (cancelled) return;
         initializeChannelSurfaces(
@@ -105,8 +113,11 @@ export function useImportedSpaceChannels({
           descriptors
             .filter(
               (surface) =>
-                surface.space === spaceName ||
-                (surface.space === "global" && surface.category === "core"),
+                space.surfaces.includes(surface.name) &&
+                isSurfaceEligibleForPlacement(surface, "channel_tab", {
+                  space: space.name,
+                  channel: true,
+                }),
             )
             .map((surface) => surface.name),
         );

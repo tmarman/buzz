@@ -1,3 +1,4 @@
+mod agency_automations;
 mod agency_runtime;
 mod agent_auth;
 mod agent_config;
@@ -49,6 +50,7 @@ mod qr_download;
 mod relay_members;
 mod relay_reconnect;
 mod social;
+mod surface_sessions;
 mod team_snapshot;
 mod teams;
 mod updater;
@@ -59,6 +61,7 @@ mod window_vibrancy;
 mod workflows;
 mod workspace;
 
+pub use agency_automations::*;
 pub use agency_runtime::*;
 pub use agent_auth::*;
 pub use agent_config::*;
@@ -102,6 +105,7 @@ pub use qr_download::*;
 pub use relay_members::*;
 pub use relay_reconnect::*;
 pub use social::*;
+pub use surface_sessions::*;
 pub use team_snapshot::*;
 pub use teams::*;
 pub use updater::*;

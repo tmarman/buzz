@@ -1,8 +1,20 @@
-import { Plus, RefreshCw, Zap } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronUp,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  Zap,
+} from "lucide-react";
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
+import {
+  discoverAgencyAutomations,
+  type AgencyAutomation,
+} from "@/features/workflows/agencyAutomations";
 import { WorkflowCard } from "@/features/workflows/ui/WorkflowCard";
 import { WorkflowDeleteDialog } from "@/features/workflows/ui/WorkflowDeleteDialog";
 import { WorkflowDetailPanel } from "@/features/workflows/ui/WorkflowDetailPanel";
@@ -14,6 +26,7 @@ import {
   triggerWorkflow,
 } from "@/shared/api/tauriWorkflows";
 import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
 import { Card } from "@/shared/ui/card";
 import { Skeleton } from "@/shared/ui/skeleton";
 
@@ -34,6 +47,59 @@ type DialogState =
   | { mode: "create" }
   | { mode: "edit"; workflow: Workflow }
   | { mode: "duplicate"; workflow: Workflow };
+
+function automationName(name: string): string {
+  return name
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function AgencyAutomationCard({
+  automation,
+}: {
+  automation: AgencyAutomation;
+}) {
+  return (
+    <Card className="p-3">
+      <div className="flex items-start gap-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Bot className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">
+              {automationName(automation.name)}
+            </span>
+            <Badge variant={automation.enabled ? "success" : "secondary"}>
+              {automation.enabled ? "active" : "paused"}
+            </Badge>
+          </div>
+          {automation.description ? (
+            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+              {automation.description}
+            </p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {automation.ownerAgent ? (
+              <Badge variant="outline">{automation.ownerAgent}</Badge>
+            ) : null}
+            {automation.triggers.map((trigger) => (
+              <Badge key={trigger} variant="secondary">
+                {trigger}
+              </Badge>
+            ))}
+            <Badge className="gap-1" variant="outline">
+              <MessageSquare className="h-3 w-3" />
+              Thread contract
+            </Badge>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 function WorkflowsListSkeleton() {
   return (
@@ -74,6 +140,8 @@ export function WorkflowsView({
     mode: "closed",
   });
   const [deleteTarget, setDeleteTarget] = React.useState<Workflow | null>(null);
+  const [showAllAgencyAutomations, setShowAllAgencyAutomations] =
+    React.useState(false);
   const queryClient = useQueryClient();
 
   const memberChannels = channels.filter((c) => c.isMember);
@@ -106,6 +174,18 @@ export function WorkflowsView({
   });
 
   const allWorkflows = allWorkflowsQuery.data ?? [];
+  const agencyAutomationsQuery = useQuery({
+    queryKey: ["agency-automations"],
+    queryFn: discoverAgencyAutomations,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const agencyAutomations = agencyAutomationsQuery.data ?? [];
+  const visibleAgencyAutomations = showAllAgencyAutomations
+    ? agencyAutomations
+    : agencyAutomations.slice(0, 6);
+  const isRefreshing =
+    allWorkflowsQuery.isFetching || agencyAutomationsQuery.isFetching;
 
   const triggerMutation = useMutation({
     mutationFn: (workflowId: string) => triggerWorkflow(workflowId),
@@ -180,13 +260,16 @@ export function WorkflowsView({
             <h2 className="text-lg font-semibold">Workflows</h2>
             <Button
               aria-label="Refresh workflows"
-              disabled={allWorkflowsQuery.isFetching}
-              onClick={() => void allWorkflowsQuery.refetch()}
+              disabled={isRefreshing}
+              onClick={() => {
+                void allWorkflowsQuery.refetch();
+                void agencyAutomationsQuery.refetch();
+              }}
               size="icon"
               variant="ghost"
             >
               <RefreshCw
-                className={`h-4 w-4 ${allWorkflowsQuery.isFetching ? "animate-spin" : ""}`}
+                className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
               />
             </Button>
           </div>
@@ -195,6 +278,46 @@ export function WorkflowsView({
             Create Workflow
           </Button>
         </div>
+
+        {agencyAutomations.length > 0 ? (
+          <section className="mb-6">
+            <div className="mb-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Agency automations</h3>
+                <Badge variant="secondary">{agencyAutomations.length}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Scheduled work from connected runtimes. The Agency contract
+                projects each run into an ordinary task thread.
+              </p>
+            </div>
+            <div className="grid gap-2 xl:grid-cols-2">
+              {visibleAgencyAutomations.map((automation) => (
+                <AgencyAutomationCard
+                  automation={automation}
+                  key={automation.id}
+                />
+              ))}
+            </div>
+            {agencyAutomations.length > 6 ? (
+              <Button
+                className="mt-2"
+                onClick={() => setShowAllAgencyAutomations((value) => !value)}
+                size="sm"
+                variant="ghost"
+              >
+                {showAllAgencyAutomations ? (
+                  <ChevronUp className="mr-1 h-4 w-4" />
+                ) : (
+                  <ChevronDown className="mr-1 h-4 w-4" />
+                )}
+                {showAllAgencyAutomations
+                  ? "Show fewer"
+                  : `Show all ${agencyAutomations.length}`}
+              </Button>
+            ) : null}
+          </section>
+        ) : null}
 
         {allWorkflowsQuery.isLoading ? (
           <WorkflowsListSkeleton />
@@ -209,7 +332,7 @@ export function WorkflowsView({
               Retry
             </Button>
           </div>
-        ) : allWorkflows.length === 0 ? (
+        ) : allWorkflows.length === 0 && agencyAutomations.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
             <Zap className="h-10 w-10 opacity-30" />
             <p className="text-sm">No workflows yet</p>
@@ -222,23 +345,28 @@ export function WorkflowsView({
               Create your first workflow
             </Button>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {allWorkflows.map(({ workflow, channelName }) => (
-              <WorkflowCard
-                channelName={channelName}
-                isActive={selectedWorkflowId === workflow.id}
-                key={workflow.id}
-                onDelete={handleDelete}
-                onDuplicate={handleDuplicate}
-                onEdit={handleEdit}
-                onSelect={onSelectWorkflow}
-                onTrigger={handleTrigger}
-                workflow={workflow}
-              />
-            ))}
-          </div>
-        )}
+        ) : allWorkflows.length > 0 ? (
+          <section>
+            {agencyAutomations.length > 0 ? (
+              <h3 className="mb-3 text-sm font-semibold">Buzz workflows</h3>
+            ) : null}
+            <div className="space-y-2">
+              {allWorkflows.map(({ workflow, channelName }) => (
+                <WorkflowCard
+                  channelName={channelName}
+                  isActive={selectedWorkflowId === workflow.id}
+                  key={workflow.id}
+                  onDelete={handleDelete}
+                  onDuplicate={handleDuplicate}
+                  onEdit={handleEdit}
+                  onSelect={onSelectWorkflow}
+                  onTrigger={handleTrigger}
+                  workflow={workflow}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
 
       {selectedWorkflowId ? (

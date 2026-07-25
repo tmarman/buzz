@@ -18,12 +18,22 @@ export type SurfaceHostContextMessage = {
   type: "agency.surface.context";
   protocol: typeof SURFACE_HOST_PROTOCOL;
   host: "buzz";
+  agencyId?: string;
+  surfaceId?: string;
   embedded: boolean;
   space?: string;
   projectRef?: string;
   channelId?: string;
   communityId?: string;
   capabilities: SurfaceHostCapability[];
+};
+
+export type SurfaceHostSessionMessage = {
+  type: "agency.surface.session";
+  protocol: typeof SURFACE_HOST_PROTOCOL;
+  token: string;
+  expiresAt?: string;
+  actions: string[];
 };
 
 export type SurfaceHostThemeMessage = {
@@ -83,17 +93,21 @@ export function buildSurfaceHostTheme(
 
 export function buildSurfaceHostContext({
   capabilities = ["host.theme"],
+  agencyId,
   channelId,
   communityId,
   embedded,
   projectRef,
+  surfaceId,
   space,
 }: {
   capabilities?: SurfaceHostCapability[];
+  agencyId?: string;
   channelId?: string;
   communityId?: string;
   embedded: boolean;
   projectRef?: string;
+  surfaceId?: string;
   space?: string;
 }): SurfaceHostContextMessage {
   return {
@@ -101,12 +115,22 @@ export function buildSurfaceHostContext({
     protocol: SURFACE_HOST_PROTOCOL,
     host: "buzz",
     embedded,
+    ...(agencyId ? { agencyId } : {}),
+    ...(surfaceId ? { surfaceId } : {}),
     ...(space ? { space } : {}),
     ...(projectRef ? { projectRef } : {}),
     ...(channelId ? { channelId } : {}),
     ...(communityId ? { communityId } : {}),
     capabilities,
   };
+}
+
+export function postSurfaceHostSession(
+  frame: HTMLIFrameElement | null,
+  session: SurfaceHostSessionMessage,
+  origin: string = SURFACE_HOST_ORIGIN,
+): void {
+  frame?.contentWindow?.postMessage(session, origin);
 }
 
 export function isSurfaceReadyMessage(

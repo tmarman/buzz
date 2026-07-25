@@ -2,13 +2,18 @@ const STORAGE_KEY_PREFIX = "buzz-channel-spaces.v1";
 
 export const CHANNEL_SPACE_CHANGE_EVENT = "buzz:channel-space-change";
 
+export type ChannelAgencyScope = {
+  agencyId: string;
+  space: string;
+};
+
 type ChannelSpaceStore = {
-  version: 1;
-  channels: Record<string, string>;
+  version: 2;
+  channels: Record<string, ChannelAgencyScope>;
 };
 
 const DEFAULT_STORE: ChannelSpaceStore = Object.freeze({
-  version: 1,
+  version: 2,
   channels: {},
 });
 
@@ -24,7 +29,7 @@ function readStore(pubkey: string): ChannelSpaceStore {
     if (typeof parsed !== "object" || parsed === null) return DEFAULT_STORE;
     const source = parsed as Record<string, unknown>;
     if (
-      source.version !== 1 ||
+      (source.version !== 1 && source.version !== 2) ||
       typeof source.channels !== "object" ||
       source.channels === null ||
       Array.isArray(source.channels)
@@ -33,13 +38,25 @@ function readStore(pubkey: string): ChannelSpaceStore {
     }
     const channels = Object.fromEntries(
       Object.entries(source.channels as Record<string, unknown>).flatMap(
-        ([channelId, value]) =>
-          typeof value === "string" && value.trim()
-            ? [[channelId, value.trim()]]
-            : [],
+        ([channelId, value]) => {
+          if (typeof value === "string" && value.trim()) {
+            return [[channelId, { agencyId: "voxelbox", space: value.trim() }]];
+          }
+          if (typeof value !== "object" || value === null) return [];
+          const entry = value as Record<string, unknown>;
+          const space =
+            typeof entry.space === "string" ? entry.space.trim() : "";
+          const agencyId =
+            typeof entry.agencyId === "string"
+              ? entry.agencyId.trim()
+              : typeof entry.agency_id === "string"
+                ? entry.agency_id.trim()
+                : "";
+          return space ? [[channelId, { agencyId, space }]] : [];
+        },
       ),
-    );
-    return { version: 1, channels };
+    ) as Record<string, ChannelAgencyScope>;
+    return { version: 2, channels };
   } catch {
     return DEFAULT_STORE;
   }
@@ -80,6 +97,13 @@ export function getChannelSpace(
   pubkey: string,
   channelId: string,
 ): string | undefined {
+  return readStore(pubkey).channels[channelId]?.space;
+}
+
+export function getChannelAgencyScope(
+  pubkey: string,
+  channelId: string,
+): ChannelAgencyScope | undefined {
   return readStore(pubkey).channels[channelId];
 }
 
@@ -88,12 +112,27 @@ export function setChannelSpace(
   channelId: string,
   space: string,
 ): boolean {
-  const normalized = space.trim();
-  if (!normalized) return clearChannelSpace(pubkey, channelId);
+  return setChannelAgencyScope(pubkey, channelId, {
+    agencyId: "voxelbox",
+    space,
+  });
+}
+
+export function setChannelAgencyScope(
+  pubkey: string,
+  channelId: string,
+  scope: ChannelAgencyScope,
+): boolean {
+  const normalizedSpace = scope.space.trim();
+  const normalizedAgency = scope.agencyId.trim();
+  if (!normalizedSpace) return clearChannelSpace(pubkey, channelId);
   const store = readStore(pubkey);
   return writeStore(pubkey, {
-    version: 1,
-    channels: { ...store.channels, [channelId]: normalized },
+    version: 2,
+    channels: {
+      ...store.channels,
+      [channelId]: { agencyId: normalizedAgency, space: normalizedSpace },
+    },
   });
 }
 
@@ -101,5 +140,5 @@ export function clearChannelSpace(pubkey: string, channelId: string): boolean {
   const store = readStore(pubkey);
   if (!Object.hasOwn(store.channels, channelId)) return true;
   const { [channelId]: _, ...channels } = store.channels;
-  return writeStore(pubkey, { version: 1, channels });
+  return writeStore(pubkey, { version: 2, channels });
 }

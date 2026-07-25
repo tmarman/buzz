@@ -1,8 +1,8 @@
 import * as React from "react";
 
 import {
-  getChannelSpace,
-  setChannelSpace,
+  getChannelAgencyScope,
+  setChannelAgencyScope,
   subscribeChannelSpace,
 } from "@/features/sidebar/lib/channelSpaceStorage";
 import {
@@ -11,10 +11,10 @@ import {
 } from "@/features/sidebar/lib/channelSurfaceStorage";
 import {
   fetchInstalledSurfaceDescriptors,
-  fetchVoxelboxSpaces,
+  fetchAgencySpaces,
   type InstalledSurfaceDescriptor,
-  matchChannelToVoxelboxSpace,
-  type VoxelboxSpaceSummary,
+  matchChannelToAgencySpace,
+  type AgencySpaceSummary,
 } from "@/features/surfaces/lib/surfaceDiscovery";
 
 export type ChannelSurfaceTabState =
@@ -22,6 +22,7 @@ export type ChannelSurfaceTabState =
       mode: "frame";
       surface: string;
       descriptor: InstalledSurfaceDescriptor;
+      agencyId?: string;
       executionScope: "global" | `space:${string}`;
     }
   | { mode: "empty"; surface: string; descriptor: null };
@@ -51,7 +52,13 @@ export function resolveChannelSurfaceTabs(
   return mappedSurfaces.map((surface) => {
     const descriptor = installedByName.get(surface);
     return descriptor
-      ? { mode: "frame" as const, surface, descriptor, executionScope }
+      ? {
+          mode: "frame" as const,
+          surface,
+          descriptor,
+          ...(descriptor.agencyId ? { agencyId: descriptor.agencyId } : {}),
+          executionScope,
+        }
       : { mode: "empty" as const, surface, descriptor: null };
   });
 }
@@ -68,13 +75,38 @@ export function resolveChannelSpaceAssociation({
   storedSpace,
 }: {
   channelName?: string | null;
-  discoveredSpaces: readonly VoxelboxSpaceSummary[];
+  discoveredSpaces: readonly AgencySpaceSummary[];
   storedSpace?: string | null;
 }): string | null {
+  return (
+    resolveChannelAgencyAssociation({
+      channelName,
+      discoveredSpaces,
+      storedScope: storedSpace
+        ? { agencyId: "voxelbox", space: storedSpace }
+        : null,
+    })?.space ?? null
+  );
+}
+
+export function resolveChannelAgencyAssociation({
+  channelName,
+  discoveredSpaces,
+  storedScope,
+}: {
+  channelName?: string | null;
+  discoveredSpaces: readonly AgencySpaceSummary[];
+  storedScope?: { agencyId: string; space: string } | null;
+}): { agencyId: string; space: string } | null {
   const inferredSpace = channelName
-    ? matchChannelToVoxelboxSpace(channelName, discoveredSpaces)?.name
+    ? matchChannelToAgencySpace(channelName, discoveredSpaces)
     : undefined;
-  return inferredSpace ?? storedSpace ?? null;
+  return inferredSpace
+    ? {
+        agencyId: inferredSpace.agencyId ?? "voxelbox",
+        space: inferredSpace.name,
+      }
+    : (storedScope ?? null);
 }
 
 export type ChannelSurfaceTabHandle = {
@@ -83,6 +115,7 @@ export type ChannelSurfaceTabHandle = {
   activeState: ChannelSurfaceTabState | null;
   isAppActive: boolean;
   space: string | null;
+  agencyId: string | null;
   activate: (surface: string) => void;
   deactivate: () => void;
 };
@@ -108,7 +141,7 @@ export function useChannelSurfaceTab({
   >([]);
   const [activeSurface, setActiveSurface] = React.useState<string | null>(null);
   const [discoveredSpaces, setDiscoveredSpaces] = React.useState<
-    VoxelboxSpaceSummary[]
+    AgencySpaceSummary[]
   >([]);
 
   // Reactive read of the mapping. useSyncExternalStore re-reads whenever the
@@ -127,24 +160,33 @@ export function useChannelSurfaceTab({
     () => JSON.parse(mappedSurfacesSerialized) as string[],
     [mappedSurfacesSerialized],
   );
-  const getStoredSpace = React.useCallback((): string | null => {
-    if (!pubkey || !channelId) return null;
-    return getChannelSpace(pubkey, channelId) ?? null;
+  const getStoredScope = React.useCallback((): string => {
+    if (!pubkey || !channelId) return "null";
+    return JSON.stringify(getChannelAgencyScope(pubkey, channelId) ?? null);
   }, [pubkey, channelId]);
-  const storedSpace = React.useSyncExternalStore(
+  const storedScopeSerialized = React.useSyncExternalStore(
     subscribeChannelSpace,
-    getStoredSpace,
-    getStoredSpace,
+    getStoredScope,
+    getStoredScope,
   );
-  const selectedSpace = resolveChannelSpaceAssociation({
+  const storedScope = React.useMemo(
+    () =>
+      JSON.parse(storedScopeSerialized) as {
+        agencyId: string;
+        space: string;
+      } | null,
+    [storedScopeSerialized],
+  );
+  const selectedScope = resolveChannelAgencyAssociation({
     channelName,
     discoveredSpaces,
-    storedSpace,
+    storedScope,
   });
+  const selectedSpace = selectedScope?.space ?? null;
 
   React.useEffect(() => {
     let cancelled = false;
-    void fetchVoxelboxSpaces().then((spaces) => {
+    void fetchAgencySpaces().then((spaces) => {
       if (!cancelled) setDiscoveredSpaces(spaces);
     });
     return () => {
@@ -157,12 +199,15 @@ export function useChannelSurfaceTab({
       !pubkey ||
       !channelId ||
       !selectedSpace ||
-      selectedSpace === storedSpace
+      (selectedScope?.space === storedScope?.space &&
+        selectedScope?.agencyId === storedScope?.agencyId)
     ) {
       return;
     }
-    setChannelSpace(pubkey, channelId, selectedSpace);
-  }, [channelId, pubkey, selectedSpace, storedSpace]);
+    if (selectedScope) {
+      setChannelAgencyScope(pubkey, channelId, selectedScope);
+    }
+  }, [channelId, pubkey, selectedScope, storedScope, selectedSpace]);
 
   // Re-validate the allowlist whenever the mapping changes (and on mount). Any
   // discovery failure degrades to [] so the allowlist gate falls through to the
@@ -216,6 +261,7 @@ export function useChannelSurfaceTab({
     activeState,
     isAppActive: activeState !== null,
     space: selectedSpace,
+    agencyId: selectedScope?.agencyId ?? null,
     activate,
     deactivate,
   };

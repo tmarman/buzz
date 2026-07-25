@@ -34,6 +34,10 @@ export function ChannelSurfacePane({
           communityId={communityId}
           embedded
           name={state.surface}
+          agencyId={state.agencyId}
+          route={state.descriptor?.route}
+          sessionActions={state.descriptor?.sessionActions}
+          surfaceId={state.descriptor?.name ?? state.surface}
           scope={state.executionScope}
         />
       </div>

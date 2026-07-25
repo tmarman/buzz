@@ -6,7 +6,7 @@ import test from "node:test";
 // Contract this test pins for the not-yet-written module:
 //   surfaceDiscovery.ts
 //     fetchInstalledSurfaces(): Promise<string[]>
-//       GETs http://localhost:1337/surfaces/ (a JSON array of { name, ... }
+//       GETs the canonical descriptor directory (a JSON array of { id, ... }
 //       objects) and resolves the array's `name` values. ANY failure —
 //       non-ok response, fetch throw, non-array / invalid JSON — resolves to
 //       [] and NEVER throws (graceful degradation).
@@ -23,7 +23,8 @@ import {
   matchChannelToVoxelboxSpace,
 } from "./surfaceDiscovery.ts";
 
-const DISCOVERY_URL = "http://localhost:1337/surfaces/?scope=global";
+const DISCOVERY_URL =
+  "http://localhost:1337/api/surfaces/descriptors?scope=global";
 
 function withFetch(handler, run) {
   const originalFetch = globalThis.fetch;
