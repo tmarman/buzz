@@ -59,6 +59,8 @@ const descriptor = (name, space = "global") => ({
   ownerAgent: "",
   icon: "",
   category: "",
+  placements: ["channel_tab"],
+  requiresContext: [],
 });
 
 // ── render: list discovered surfaces ──────────────────────────────────────────
@@ -162,4 +164,34 @@ test("Space filtering keeps global apps and the selected Space apps", () => {
   assert.match(html, />launcher</);
   assert.match(html, />control</);
   assert.doesNotMatch(html, />finances</);
+});
+
+test("legacy apps are hidden from recommendations but remain visible when selected", () => {
+  const legacy = {
+    ...descriptor("control"),
+    placements: [],
+  };
+  const hidden = renderToStaticMarkup(
+    React.createElement(ChannelSurfacePicker, {
+      surfaces: [legacy],
+      spaces: [],
+      selectedSpace: null,
+      selectedSurfaces: [],
+      onToggle: noop,
+      onSpaceChange: noop,
+    }),
+  );
+  assert.doesNotMatch(hidden, />control</);
+
+  const selected = renderToStaticMarkup(
+    React.createElement(ChannelSurfacePicker, {
+      surfaces: [legacy],
+      spaces: [],
+      selectedSpace: null,
+      selectedSurfaces: ["control"],
+      onToggle: noop,
+      onSpaceChange: noop,
+    }),
+  );
+  assert.match(selected, />control</);
 });

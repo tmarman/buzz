@@ -7,15 +7,11 @@ use std::time::Duration;
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
+use crate::commands::agency_runtime_endpoint;
 use crate::managed_agents::{
     BackendKind, CreateManagedAgentRequest, ManagedAgentSummary, RespondTo,
 };
 
-const SURFACE_DISCOVERY_URL: &str = "http://localhost:1337/surfaces/";
-const SURFACE_HELLO_URL: &str = "http://localhost:1337/api/hello";
-const STEWARD_DISCOVERY_URL: &str = "http://localhost:1337/api/stewards";
-const AGENCY_ENROLLMENT_URL: &str = "http://localhost:1337/api/agency/enrollments";
-const SPACE_DISCOVERY_URL: &str = "http://localhost:1337/api/spaces";
 const SURFACE_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +27,10 @@ struct InstalledSurface {
     icon: String,
     #[serde(default)]
     category: String,
+    #[serde(default)]
+    placements: Vec<String>,
+    #[serde(default)]
+    requires_context: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +57,10 @@ struct NegotiatedSurface {
 struct NegotiatedRender {
     #[serde(default)]
     category: String,
+    #[serde(default)]
+    placements: Vec<String>,
+    #[serde(default)]
+    requires_context: Vec<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -68,6 +72,8 @@ pub struct LocalSurfaceDescriptor {
     owner_agent: String,
     icon: String,
     category: String,
+    placements: Vec<String>,
+    requires_context: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -136,13 +142,14 @@ pub struct JoinVoxelboxAgentResult {
 /// attempted first; the legacy directory remains as a compatibility fallback.
 #[tauri::command]
 pub async fn discover_local_surfaces(
+    app: AppHandle,
     state: State<'_, AppState>,
     scope: Option<String>,
 ) -> Result<Vec<LocalSurfaceDescriptor>, String> {
     let scope = normalize_surface_scope(scope.as_deref())?;
     if let Ok(response) = state
-        .http_client
-        .post(SURFACE_HELLO_URL)
+        .media_fetch_client
+        .post(agency_runtime_endpoint(&app, "/api/hello")?)
         .query(&[("scope", scope.as_str())])
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .json(&serde_json::json!({
@@ -162,8 +169,8 @@ pub async fn discover_local_surfaces(
     }
 
     let response = state
-        .http_client
-        .get(SURFACE_DISCOVERY_URL)
+        .media_fetch_client
+        .get(agency_runtime_endpoint(&app, "/surfaces/")?)
         .query(&[("scope", scope.as_str())])
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .send()
@@ -189,11 +196,12 @@ pub async fn discover_local_surfaces(
 /// subscriptions, or other operator-only registry fields.
 #[tauri::command]
 pub async fn discover_voxelbox_spaces(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<VoxelboxSpaceSummary>, String> {
     let response = state
-        .http_client
-        .get(SPACE_DISCOVERY_URL)
+        .media_fetch_client
+        .get(agency_runtime_endpoint(&app, "/api/spaces")?)
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .send()
         .await
@@ -220,11 +228,12 @@ pub async fn discover_voxelbox_spaces(
 /// do not claim relay membership or grant execution authority.
 #[tauri::command]
 pub async fn discover_voxelbox_agents(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<VoxelboxAgentSummary>, String> {
     let response = state
-        .http_client
-        .get(STEWARD_DISCOVERY_URL)
+        .media_fetch_client
+        .get(agency_runtime_endpoint(&app, "/api/stewards")?)
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .send()
         .await
@@ -251,10 +260,11 @@ pub async fn discover_voxelbox_agents(
 
 /// Imports the Buzz-minted identity into a configured local steward.
 ///
-/// The fixed loopback target keeps the nsec out of browser fetches and prevents
-/// this command from becoming an arbitrary native POST primitive.
+/// The native-validated loopback target keeps the nsec out of browser fetches
+/// and prevents this command from becoming an arbitrary native POST primitive.
 #[tauri::command]
 pub async fn import_voxelbox_agent_identity(
+    app: AppHandle,
     state: State<'_, AppState>,
     steward: String,
     nsec: String,
@@ -264,6 +274,7 @@ pub async fn import_voxelbox_agent_identity(
     let owner_auth_tag = serde_json::from_str::<serde_json::Value>(&owner_auth_tag)
         .map_err(|_| "owner auth tag is invalid".to_string())?;
     enroll_voxelbox_agent(
+        &app,
         state.inner(),
         &steward,
         &nsec,
@@ -291,8 +302,8 @@ pub async fn join_voxelbox_agent(
     }
 
     let response = state
-        .http_client
-        .get(STEWARD_DISCOVERY_URL)
+        .media_fetch_client
+        .get(agency_runtime_endpoint(&app, "/api/stewards")?)
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .send()
         .await
@@ -387,6 +398,7 @@ pub async fn join_voxelbox_agent(
     let enrollment = match owner_auth_tag {
         Ok(owner_auth_tag) => {
             enroll_voxelbox_agent(
+                &app,
                 state.inner(),
                 &steward,
                 &nsec,
@@ -417,6 +429,7 @@ pub async fn join_voxelbox_agent(
 }
 
 async fn enroll_voxelbox_agent(
+    app: &AppHandle,
     state: &AppState,
     steward: &str,
     nsec: &str,
@@ -424,8 +437,8 @@ async fn enroll_voxelbox_agent(
     replace_existing: bool,
 ) -> Result<VoxelboxEnrollmentResult, String> {
     let response = state
-        .http_client
-        .post(AGENCY_ENROLLMENT_URL)
+        .media_fetch_client
+        .post(agency_runtime_endpoint(app, "/api/agency/enrollments")?)
         .timeout(SURFACE_DISCOVERY_TIMEOUT)
         .json(&serde_json::json!({
             "steward": steward,
@@ -464,6 +477,8 @@ fn installed_surface_descriptors(surfaces: Vec<InstalledSurface>) -> Vec<LocalSu
                 owner_agent: surface.steward.trim().to_string(),
                 icon: surface.icon.trim().to_string(),
                 category: surface.category.trim().to_string(),
+                placements: clean_surface_tokens(surface.placements),
+                requires_context: clean_surface_tokens(surface.requires_context),
             })
         })
         .collect()
@@ -474,23 +489,30 @@ fn negotiated_surface_descriptors(surfaces: Vec<NegotiatedSurface>) -> Vec<Local
         .into_iter()
         .filter_map(|surface| {
             let name = surface.id.trim();
-            let category = surface
-                .render
-                .as_ref()
-                .map(|render| render.category.trim().to_string())
-                .unwrap_or_default();
-            surface
-                .render
-                .is_some()
-                .then(|| LocalSurfaceDescriptor {
-                    name: name.to_string(),
-                    space: explicit_surface_space(&surface.space),
-                    description: surface.description.trim().to_string(),
-                    owner_agent: surface.owner_agent.trim().to_string(),
-                    icon: surface.icon.trim().to_string(),
-                    category,
-                })
-                .filter(|_| !name.is_empty())
+            if name.is_empty() {
+                return None;
+            }
+            let render = surface.render?;
+            Some(LocalSurfaceDescriptor {
+                name: name.to_string(),
+                space: explicit_surface_space(&surface.space),
+                description: surface.description.trim().to_string(),
+                owner_agent: surface.owner_agent.trim().to_string(),
+                icon: surface.icon.trim().to_string(),
+                category: render.category.trim().to_string(),
+                placements: clean_surface_tokens(render.placements),
+                requires_context: clean_surface_tokens(render.requires_context),
+            })
+        })
+        .collect()
+}
+
+fn clean_surface_tokens(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let value = value.trim().to_string();
+            (!value.is_empty()).then_some(value)
         })
         .collect()
 }
@@ -642,6 +664,8 @@ mod tests {
                 steward: "weaver".to_string(),
                 icon: "sliders-horizontal".to_string(),
                 category: "core".to_string(),
+                placements: vec!["channel_tab".to_string()],
+                requires_context: vec!["space".to_string()],
             },
             InstalledSurface {
                 name: "  ".to_string(),
@@ -650,6 +674,8 @@ mod tests {
                 steward: String::new(),
                 icon: String::new(),
                 category: String::new(),
+                placements: Vec::new(),
+                requires_context: Vec::new(),
             },
             InstalledSurface {
                 name: "flow".to_string(),
@@ -658,6 +684,8 @@ mod tests {
                 steward: String::new(),
                 icon: String::new(),
                 category: String::new(),
+                placements: Vec::new(),
+                requires_context: Vec::new(),
             },
         ]);
 
@@ -671,6 +699,8 @@ mod tests {
                     owner_agent: "weaver".to_string(),
                     icon: "sliders-horizontal".to_string(),
                     category: "core".to_string(),
+                    placements: vec!["channel_tab".to_string()],
+                    requires_context: vec!["space".to_string()],
                 },
                 LocalSurfaceDescriptor {
                     name: "flow".to_string(),
@@ -679,6 +709,8 @@ mod tests {
                     owner_agent: String::new(),
                     icon: String::new(),
                     category: String::new(),
+                    placements: Vec::new(),
+                    requires_context: Vec::new(),
                 }
             ]
         );
@@ -695,6 +727,8 @@ mod tests {
                 icon: "sliders-horizontal".to_string(),
                 render: Some(NegotiatedRender {
                     category: "core".to_string(),
+                    placements: vec!["channel_tab".to_string()],
+                    requires_context: vec!["space".to_string()],
                 }),
             },
             NegotiatedSurface {

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // RED baseline (Track E — channel-app-tab).
 //
@@ -130,15 +131,20 @@ test("mapping present with empty discovery → empty state, never a frame", () =
 });
 
 test("ChannelSurfacePane renders the sandboxed frame when mode is frame", () => {
+  const queryClient = new QueryClient();
   const html = renderToStaticMarkup(
-    React.createElement(ChannelSurfacePane, {
-      state: {
-        descriptor: descriptor("agency"),
-        executionScope: "space:voxelbox-ai",
-        mode: "frame",
-        surface: "agency",
-      },
-    }),
+    React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      React.createElement(ChannelSurfacePane, {
+        state: {
+          descriptor: descriptor("agency"),
+          executionScope: "space:voxelbox-ai",
+          mode: "frame",
+          surface: "agency",
+        },
+      }),
+    ),
   );
   assert.ok(html.includes("<iframe"), "frame mode should render an iframe");
   assert.ok(

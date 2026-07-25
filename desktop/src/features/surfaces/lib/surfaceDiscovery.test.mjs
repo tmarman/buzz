@@ -18,6 +18,7 @@ import {
   fetchInstalledSurfaceDescriptors,
   fetchInstalledSurfaces,
   fetchVoxelboxSpaces,
+  isSurfaceEligibleForPlacement,
   isSurfaceAllowed,
   matchChannelToVoxelboxSpace,
 } from "./surfaceDiscovery.ts";
@@ -152,6 +153,8 @@ test("surface descriptors normalize explicit and legacy Space scope", async () =
           ownerAgent: "",
           icon: "",
           category: "",
+          placements: [],
+          requiresContext: [],
         },
         {
           name: "scout",
@@ -160,6 +163,8 @@ test("surface descriptors normalize explicit and legacy Space scope", async () =
           ownerAgent: "",
           icon: "",
           category: "",
+          placements: [],
+          requiresContext: [],
         },
         {
           name: "flow",
@@ -168,6 +173,8 @@ test("surface descriptors normalize explicit and legacy Space scope", async () =
           ownerAgent: "",
           icon: "",
           category: "",
+          placements: [],
+          requiresContext: [],
         },
       ]);
     },
@@ -197,6 +204,8 @@ test("surface discovery sends the requested Space scope to the daemon", async ()
             ownerAgent: "",
             icon: "",
             category: "",
+            placements: [],
+            requiresContext: [],
           },
         ],
       );
@@ -321,4 +330,38 @@ test("isSurfaceAllowed: true only for names in the discovered list", () => {
 
 test("isSurfaceAllowed: empty installed list allows nothing", () => {
   assert.equal(isSurfaceAllowed("agency", []), false);
+});
+
+test("surface placement requires an explicit placement and all host context", () => {
+  const board = {
+    name: "board",
+    space: "global",
+    description: "",
+    ownerAgent: "smithy",
+    icon: "columns-3",
+    category: "work",
+    placements: ["channel_tab", "project_tab"],
+    requiresContext: ["space"],
+  };
+  assert.equal(
+    isSurfaceEligibleForPlacement(board, "channel_tab", {
+      channel: true,
+      space: "voxelbox-ai",
+    }),
+    true,
+  );
+  assert.equal(
+    isSurfaceEligibleForPlacement(board, "channel_tab", {
+      channel: true,
+      space: null,
+    }),
+    false,
+  );
+  assert.equal(
+    isSurfaceEligibleForPlacement({ ...board, placements: [] }, "channel_tab", {
+      channel: true,
+      space: "voxelbox-ai",
+    }),
+    false,
+  );
 });

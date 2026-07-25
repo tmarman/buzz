@@ -3,6 +3,7 @@ import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Integration wiring for Track E (picker → storage → channel app tab).
 //
@@ -77,10 +78,17 @@ function mountTab(discovery) {
   };
 }
 
-const paneHtml = (state) =>
-  state
-    ? renderToStaticMarkup(React.createElement(ChannelSurfacePane, { state }))
-    : "";
+const paneHtml = (state) => {
+  if (!state) return "";
+  const queryClient = new QueryClient();
+  return renderToStaticMarkup(
+    React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      React.createElement(ChannelSurfacePane, { state }),
+    ),
+  );
+};
 
 test("picker select → storage write → tab shows the sandboxed frame", () => {
   installReactiveWindow();

@@ -162,6 +162,7 @@ export type ChannelPaneProps = {
   threadFirstUnreadReplyId?: string | null;
   targetMessageId: string | null;
   typingPubkeys: string[];
+  voxelboxSpace?: string | null;
   isFollowingThread?: boolean;
   onFollowThread?: () => void;
   onUnfollowThread?: () => void;

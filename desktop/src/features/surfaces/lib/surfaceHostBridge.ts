@@ -1,8 +1,34 @@
 export const SURFACE_HOST_ORIGIN = "http://localhost:1337";
+export const SURFACE_HOST_PROTOCOL = "agency.ui.v1";
+
+export type SurfaceHostCapability =
+  | "host.theme"
+  | "host.open_thread"
+  | "host.open_project_artifact"
+  | "host.open_agent_chat"
+  | "host.create_work_thread"
+  | "host.compose_message";
+
+export type SurfaceReadyMessage = {
+  type: "agency.surface.ready";
+  protocol: typeof SURFACE_HOST_PROTOCOL;
+};
+
+export type SurfaceHostContextMessage = {
+  type: "agency.surface.context";
+  protocol: typeof SURFACE_HOST_PROTOCOL;
+  host: "buzz";
+  embedded: boolean;
+  space?: string;
+  projectRef?: string;
+  channelId?: string;
+  communityId?: string;
+  capabilities: SurfaceHostCapability[];
+};
 
 export type SurfaceHostThemeMessage = {
   type: "agency.surface.theme";
-  protocol: "agency.ui.v1";
+  protocol: typeof SURFACE_HOST_PROTOCOL;
   colorScheme: "light" | "dark";
   tokens: Record<string, string>;
 };
@@ -49,13 +75,63 @@ export function buildSurfaceHostTheme(
 
   return {
     type: "agency.surface.theme",
-    protocol: "agency.ui.v1",
+    protocol: SURFACE_HOST_PROTOCOL,
     colorScheme,
     tokens,
   };
 }
 
-export function postSurfaceHostTheme(frame: HTMLIFrameElement | null): void {
+export function buildSurfaceHostContext({
+  capabilities = ["host.theme"],
+  channelId,
+  communityId,
+  embedded,
+  projectRef,
+  space,
+}: {
+  capabilities?: SurfaceHostCapability[];
+  channelId?: string;
+  communityId?: string;
+  embedded: boolean;
+  projectRef?: string;
+  space?: string;
+}): SurfaceHostContextMessage {
+  return {
+    type: "agency.surface.context",
+    protocol: SURFACE_HOST_PROTOCOL,
+    host: "buzz",
+    embedded,
+    ...(space ? { space } : {}),
+    ...(projectRef ? { projectRef } : {}),
+    ...(channelId ? { channelId } : {}),
+    ...(communityId ? { communityId } : {}),
+    capabilities,
+  };
+}
+
+export function isSurfaceReadyMessage(
+  value: unknown,
+): value is SurfaceReadyMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return (
+    message.type === "agency.surface.ready" &&
+    message.protocol === SURFACE_HOST_PROTOCOL
+  );
+}
+
+export function postSurfaceHostContext(
+  frame: HTMLIFrameElement | null,
+  context: SurfaceHostContextMessage,
+  origin: string = SURFACE_HOST_ORIGIN,
+): void {
+  frame?.contentWindow?.postMessage(context, origin);
+}
+
+export function postSurfaceHostTheme(
+  frame: HTMLIFrameElement | null,
+  origin: string = SURFACE_HOST_ORIGIN,
+): void {
   const target = frame?.contentWindow;
   if (!target) return;
 
@@ -68,5 +144,5 @@ export function postSurfaceHostTheme(frame: HTMLIFrameElement | null): void {
         : rootStyles.getPropertyValue(name),
     document.documentElement.classList.contains("dark") ? "dark" : "light",
   );
-  target.postMessage(message, SURFACE_HOST_ORIGIN);
+  target.postMessage(message, origin);
 }

@@ -12,8 +12,12 @@ import type { ChannelSurfaceTabState } from "./useChannelSurfaceTab";
  *   empty state and NEVER an iframe.
  */
 export function ChannelSurfacePane({
+  channelId,
+  communityId,
   state,
 }: {
+  channelId?: string;
+  communityId?: string;
   state: ChannelSurfaceTabState;
 }) {
   if (state.mode === "frame") {
@@ -26,6 +30,8 @@ export function ChannelSurfacePane({
         data-testid="channel-surface-pane"
       >
         <SurfaceFrame
+          channelId={channelId}
+          communityId={communityId}
           embedded
           name={state.surface}
           scope={state.executionScope}

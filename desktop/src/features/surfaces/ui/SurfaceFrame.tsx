@@ -1,6 +1,18 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 
-import { postSurfaceHostTheme } from "@/features/surfaces/lib/surfaceHostBridge";
+import {
+  AGENCY_RUNTIME_CONFIG_QUERY_KEY,
+  DEFAULT_AGENCY_RUNTIME_CONFIG,
+  agencyRuntimeEndpoint,
+  fetchAgencyRuntimeConfig,
+} from "@/features/surfaces/lib/agencyRuntime";
+import {
+  buildSurfaceHostContext,
+  isSurfaceReadyMessage,
+  postSurfaceHostContext,
+  postSurfaceHostTheme,
+} from "@/features/surfaces/lib/surfaceHostBridge";
 
 export const SURFACE_BASE_URL = "http://localhost:1337/surfaces/";
 
@@ -30,15 +42,22 @@ export const SURFACE_SANDBOX = "allow-scripts allow-same-origin";
 export type SurfaceScope = "global" | `space:${string}`;
 
 export function buildSurfaceUrl({
+  baseUrl = DEFAULT_AGENCY_RUNTIME_CONFIG.baseUrl,
   embedded = false,
   name,
   scope = "global",
 }: {
+  baseUrl?: string;
   embedded?: boolean;
   name: string;
   scope?: SurfaceScope;
 }) {
-  const url = new URL(`${SURFACE_BASE_URL}${encodeURIComponent(name)}/`);
+  const url = new URL(
+    agencyRuntimeEndpoint(
+      { baseUrl },
+      `/surfaces/${encodeURIComponent(name)}/`,
+    ),
+  );
   if (embedded) {
     url.searchParams.set("embedded", "1");
   }
@@ -48,33 +67,83 @@ export function buildSurfaceUrl({
 
 export function SurfaceFrame({
   embedded = false,
+  channelId,
+  communityId,
   name,
+  projectRef,
   scope = "global",
 }: {
   embedded?: boolean;
+  channelId?: string;
+  communityId?: string;
   name: string;
+  projectRef?: string;
   scope?: SurfaceScope;
 }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
-  const src = buildSurfaceUrl({ embedded, name, scope });
+  const runtimeQuery = useQuery({
+    queryKey: AGENCY_RUNTIME_CONFIG_QUERY_KEY,
+    queryFn: fetchAgencyRuntimeConfig,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const runtime = runtimeQuery.data ?? DEFAULT_AGENCY_RUNTIME_CONFIG;
+  const runtimeOrigin = new URL(runtime.baseUrl).origin;
+  const src = buildSurfaceUrl({
+    baseUrl: runtime.baseUrl,
+    embedded,
+    name,
+    scope,
+  });
+  const space = scope.startsWith("space:")
+    ? scope.slice("space:".length)
+    : undefined;
+  const hostContext = React.useMemo(
+    () =>
+      buildSurfaceHostContext({
+        channelId,
+        communityId,
+        embedded,
+        projectRef,
+        space,
+      }),
+    [channelId, communityId, embedded, projectRef, space],
+  );
 
   React.useEffect(() => {
     const root = document.documentElement;
     const observer = new MutationObserver(() => {
-      postSurfaceHostTheme(frameRef.current);
+      postSurfaceHostTheme(frameRef.current, runtimeOrigin);
     });
     observer.observe(root, {
       attributes: true,
       attributeFilter: ["class", "style", "data-theme"],
     });
     return () => observer.disconnect();
-  }, []);
+  }, [runtimeOrigin]);
+
+  React.useEffect(() => {
+    function handleSurfaceReady(event: MessageEvent<unknown>) {
+      const frame = frameRef.current;
+      if (
+        event.origin !== runtimeOrigin ||
+        event.source !== frame?.contentWindow ||
+        !isSurfaceReadyMessage(event.data)
+      ) {
+        return;
+      }
+      postSurfaceHostContext(frame, hostContext, runtimeOrigin);
+      postSurfaceHostTheme(frame, runtimeOrigin);
+    }
+
+    window.addEventListener("message", handleSurfaceReady);
+    return () => window.removeEventListener("message", handleSurfaceReady);
+  }, [hostContext, runtimeOrigin]);
 
   return (
     <iframe
       allow="clipboard-write; microphone"
       className="min-h-0 w-full flex-1 border-0"
-      onLoad={() => postSurfaceHostTheme(frameRef.current)}
+      onLoad={() => postSurfaceHostTheme(frameRef.current, runtimeOrigin)}
       ref={frameRef}
       sandbox={SURFACE_SANDBOX}
       src={src}

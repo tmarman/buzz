@@ -16,6 +16,7 @@ import {
 import {
   fetchInstalledSurfaceDescriptors,
   fetchVoxelboxSpaces,
+  isSurfaceEligibleForPlacement,
   type InstalledSurfaceDescriptor,
   type VoxelboxSpaceSummary,
 } from "@/features/surfaces/lib/surfaceDiscovery";
@@ -87,7 +88,13 @@ export function ChannelSurfacePicker({
   surfaces,
 }: ChannelSurfacePickerProps) {
   const eligibleSurfaces = surfaces.filter(
-    (surface) => surface.space === "global" || surface.space === selectedSpace,
+    (surface) =>
+      (surface.space === "global" || surface.space === selectedSpace) &&
+      (selectedSurfaces.includes(surface.name) ||
+        isSurfaceEligibleForPlacement(surface, "channel_tab", {
+          channel: true,
+          space: selectedSpace,
+        })),
   );
 
   return (

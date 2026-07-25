@@ -3,6 +3,7 @@ import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // RED baseline (Track E — surface-frame-sandbox).
 //
@@ -19,10 +20,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SurfaceFrame } from "./SurfaceFrame.tsx";
 import { SurfaceScreen } from "./SurfaceScreen.tsx";
 
+function renderSurface(element) {
+  const queryClient = new QueryClient();
+  return renderToStaticMarkup(
+    React.createElement(QueryClientProvider, { client: queryClient }, element),
+  );
+}
+
 // ── SurfaceFrame ──────────────────────────────────────────────────────────────
 
 test("SurfaceFrame renders an iframe with a sandbox attribute permitting scripts", () => {
-  const html = renderToStaticMarkup(
+  const html = renderSurface(
     React.createElement(SurfaceFrame, { name: "agency" }),
   );
   assert.ok(html.includes("<iframe"), "should render an iframe");
@@ -39,14 +47,14 @@ test("SurfaceFrame renders an iframe with a sandbox attribute permitting scripts
 });
 
 test("SurfaceFrame retains the allow attribute", () => {
-  const html = renderToStaticMarkup(
+  const html = renderSurface(
     React.createElement(SurfaceFrame, { name: "agency" }),
   );
   assert.match(html, /allow="[^"]+"/, "iframe must keep the allow attribute");
 });
 
 test("SurfaceFrame derives src from the name with the correct base + title", () => {
-  const html = renderToStaticMarkup(
+  const html = renderSurface(
     React.createElement(SurfaceFrame, { name: "agency" }),
   );
   assert.ok(
@@ -57,7 +65,7 @@ test("SurfaceFrame derives src from the name with the correct base + title", () 
 });
 
 test("SurfaceFrame encodeURIComponent-encodes the name in the src", () => {
-  const html = renderToStaticMarkup(
+  const html = renderSurface(
     React.createElement(SurfaceFrame, { name: "voxelbox agency" }),
   );
   assert.ok(
@@ -69,7 +77,7 @@ test("SurfaceFrame encodeURIComponent-encodes the name in the src", () => {
 });
 
 test("SurfaceFrame encodes embedded Space context explicitly", () => {
-  const html = renderToStaticMarkup(
+  const html = renderSurface(
     React.createElement(SurfaceFrame, {
       embedded: true,
       name: "portfolio",
@@ -87,7 +95,7 @@ test("SurfaceFrame encodes embedded Space context explicitly", () => {
 // ── SurfaceScreen refactor (no behavioral regression, now sandboxed) ──────────
 
 test("SurfaceScreen renders the sandboxed frame with the mapped src", () => {
-  const html = renderToStaticMarkup(
+  const html = renderSurface(
     React.createElement(SurfaceScreen, { name: "agency" }),
   );
   assert.ok(

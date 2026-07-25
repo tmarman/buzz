@@ -1,11 +1,13 @@
 import { isTauri } from "@tauri-apps/api/core";
 
 import { invokeTauri } from "@/shared/api/tauri";
-
-const SURFACE_DISCOVERY_URL = "http://localhost:1337/surfaces/";
-const SPACE_DISCOVERY_URL = "http://localhost:1337/api/spaces";
+import {
+  agencyRuntimeEndpoint,
+  fetchAgencyRuntimeConfig,
+} from "./agencyRuntime";
 
 export type SurfaceDiscoveryScope = "global" | `space:${string}`;
+export type SurfacePlacement = "channel_tab" | "project_tab" | "standalone";
 
 export type InstalledSurfaceDescriptor = {
   name: string;
@@ -14,6 +16,8 @@ export type InstalledSurfaceDescriptor = {
   ownerAgent: string;
   icon: string;
   category: string;
+  placements: string[];
+  requiresContext: string[];
 };
 
 export type VoxelboxSpaceSummary = {
@@ -43,6 +47,8 @@ function normalizeSurfaceDescriptors(
               ownerAgent: "",
               icon: "",
               category: "",
+              placements: [],
+              requiresContext: [],
             },
           ]
         : [];
@@ -79,8 +85,54 @@ function normalizeSurfaceDescriptors(
     const icon = typeof source.icon === "string" ? source.icon.trim() : "";
     const category =
       typeof source.category === "string" ? source.category.trim() : "";
+    const placements = normalizeStringList(source.placements);
+    const requiresContext = normalizeStringList(
+      source.requiresContext ?? source.requires_context,
+    );
 
-    return [{ name, space, description, ownerAgent, icon, category }];
+    return [
+      {
+        name,
+        space,
+        description,
+        ownerAgent,
+        icon,
+        category,
+        placements,
+        requiresContext,
+      },
+    ];
+  });
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) =>
+    typeof item === "string" && item.trim() ? [item.trim()] : [],
+  );
+}
+
+export function isSurfaceEligibleForPlacement(
+  surface: InstalledSurfaceDescriptor,
+  placement: SurfacePlacement,
+  context: {
+    space?: string | null;
+    project?: boolean;
+    channel?: boolean;
+  },
+): boolean {
+  if (!surface.placements.includes(placement)) return false;
+  return surface.requiresContext.every((requirement) => {
+    switch (requirement) {
+      case "space":
+        return Boolean(context.space);
+      case "project":
+        return context.project === true;
+      case "channel":
+        return context.channel === true;
+      default:
+        return false;
+    }
   });
 }
 
@@ -107,7 +159,8 @@ export async function fetchInstalledSurfaceDescriptors(
       return normalizeSurfaceDescriptors(surfaces);
     }
 
-    const discoveryUrl = new URL(SURFACE_DISCOVERY_URL);
+    const runtime = await fetchAgencyRuntimeConfig();
+    const discoveryUrl = new URL(agencyRuntimeEndpoint(runtime, "/surfaces/"));
     discoveryUrl.searchParams.set("scope", scope);
     const response = await fetch(discoveryUrl.toString());
     if (!response.ok) {
@@ -133,10 +186,11 @@ export async function fetchInstalledSurfaces(
 /** Lists public Space names without retaining private daemon registry fields. */
 export async function fetchVoxelboxSpaces(): Promise<VoxelboxSpaceSummary[]> {
   try {
+    const runtime = await fetchAgencyRuntimeConfig();
     const spaces = isTauri()
       ? await invokeTauri<unknown>("discover_voxelbox_spaces")
-      : await fetch(SPACE_DISCOVERY_URL).then(async (response) =>
-          response.ok ? response.json() : [],
+      : await fetch(agencyRuntimeEndpoint(runtime, "/api/spaces")).then(
+          async (response) => (response.ok ? response.json() : []),
         );
     if (!Array.isArray(spaces)) return [];
 

@@ -154,7 +154,6 @@ export function ChannelScreen({
     string | null
   >(null);
   const [editTargetId, setEditTargetId] = React.useState<string | null>(null);
-  // URL-backed thread state catches up after navigation; this override keeps urgent open/close renders responsive.
   const [optimisticOpenThreadHeadId, setOptimisticOpenThreadHeadId] =
     React.useState<string | null | undefined>(undefined);
   const clearOptimisticThreadOverride = React.useCallback(() => {
@@ -360,11 +359,7 @@ export function ChannelScreen({
     relayAgents,
   });
   const messageOwnerProfiles = useMessageOwnerProfiles(messageProfiles);
-  // Agent set for ChannelPane's own consumers (DM huddle member resolution,
-  // the agents list): the community-scoped baseline shared by every surface,
-  // widened with channel-member roles and this screen's profile lookup.
-  // Message rows no longer take this — MessageRow derives agent-ness itself
-  // from useKnownAgentPubkeys + per-pubkey profile checks.
+  // Pane consumers merge community agents with channel roles and profiles.
   const communityAgentPubkeys = useKnownAgentPubkeys();
   const agentPubkeys = React.useMemo(() => {
     const pubkeys = new Set([...communityAgentPubkeys, ...knownAgentPubkeys]);
@@ -817,7 +812,11 @@ export function ChannelScreen({
             channelSurfaceTab.activeState ? (
               <>
                 {channelHeader}
-                <ChannelSurfacePane state={channelSurfaceTab.activeState} />
+                <ChannelSurfacePane
+                  channelId={activeChannel.id}
+                  communityId={activeCommunity?.id}
+                  state={channelSurfaceTab.activeState}
+                />
               </>
             ) : activeChannel.channelType === "forum" ? (
               <ForumChannelContent
@@ -970,6 +969,7 @@ export function ChannelScreen({
                   isJoining={joinChannelMutation.isPending}
                   onJoinChannel={joinChannelMutation.mutateAsync}
                   typingPubkeys={humanTypingPubkeys}
+                  voxelboxSpace={channelSurfaceTab.space}
                 />
               </React.Suspense>
             )

@@ -10,12 +10,19 @@ import {
   MailCheck,
   MailOpen,
   Pencil,
+  Play,
+  SquareKanban,
   SmilePlus,
   Trash2,
 } from "lucide-react";
 import * as React from "react";
+import { toast } from "sonner";
 
 import { buildMessageLink } from "@/features/messages/lib/messageLink";
+import {
+  captureBuzzMessageAsTask,
+  startBuzzMessageWork,
+} from "@/features/messages/lib/voxelboxWork";
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { getThreadReference } from "@/features/messages/lib/threading";
@@ -56,6 +63,7 @@ import {
 import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { VoxelboxWorkContext } from "./VoxelboxWorkContext";
 
 const ACTION_BUTTON_CLASS = "h-8 w-8 rounded-full p-0";
 const ACTION_ICON_CLASS = "!h-4 !w-4";
@@ -93,6 +101,8 @@ function MoreActionsMenu({
 }) {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [isReportDialogOpen, setIsReportDialogOpen] = React.useState(false);
+  const { participantId: voxelboxParticipantId, space: voxelboxSpace } =
+    React.useContext(VoxelboxWorkContext);
   // Set true the moment the user picks "Edit message". The
   // `onCloseAutoFocus` handler on `DropdownMenuContent` reads it to
   // suppress Radix's default focus-restoration (which would yank focus
@@ -237,6 +247,62 @@ function MoreActionsMenu({
             >
               <Link2 className="h-4 w-4" />
               Copy link
+            </DropdownMenuItem>
+          ) : null}
+
+          {hasCopyActions && channelId && voxelboxSpace ? (
+            <DropdownMenuItem
+              data-testid={`add-message-to-board-${message.id}`}
+              onClick={() => {
+                void captureBuzzMessageAsTask({
+                  channelId,
+                  message,
+                  space: voxelboxSpace,
+                })
+                  .then(() => {
+                    toast.success("Added to Voxelbox Board");
+                  })
+                  .catch((error: unknown) => {
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not add this message to the Board",
+                    );
+                  });
+              }}
+            >
+              <SquareKanban className="h-4 w-4" />
+              Add to Board
+            </DropdownMenuItem>
+          ) : null}
+
+          {hasCopyActions &&
+          channelId &&
+          voxelboxSpace &&
+          voxelboxParticipantId ? (
+            <DropdownMenuItem
+              data-testid={`start-work-from-message-${message.id}`}
+              onClick={() => {
+                void startBuzzMessageWork({
+                  channelId,
+                  message,
+                  participantId: voxelboxParticipantId,
+                  space: voxelboxSpace,
+                })
+                  .then(() => {
+                    toast.success("Work started in this thread");
+                  })
+                  .catch((error: unknown) => {
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not start work from this message",
+                    );
+                  });
+              }}
+            >
+              <Play className="h-4 w-4" />
+              Start work here
             </DropdownMenuItem>
           ) : null}
 

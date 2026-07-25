@@ -1,8 +1,10 @@
 import { isTauri } from "@tauri-apps/api/core";
 
 import { invokeTauri } from "@/shared/api/tauri";
-
-const VOXELBOX_AGENTS_URL = "http://localhost:1337/api/stewards";
+import {
+  agencyRuntimeEndpoint,
+  fetchAgencyRuntimeConfig,
+} from "@/features/surfaces/lib/agencyRuntime";
 
 export type VoxelboxRemoteAgent = {
   name: string;
@@ -111,7 +113,10 @@ export async function fetchVoxelboxRemoteAgents(): Promise<
       return normalizeVoxelboxAgents(agents);
     }
 
-    const response = await fetch(VOXELBOX_AGENTS_URL);
+    const runtime = await fetchAgencyRuntimeConfig();
+    const response = await fetch(
+      agencyRuntimeEndpoint(runtime, "/api/stewards"),
+    );
     if (!response.ok) return [];
     return normalizeVoxelboxAgents(await response.json());
   } catch {
