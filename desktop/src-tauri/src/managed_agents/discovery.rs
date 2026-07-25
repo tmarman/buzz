@@ -1351,4 +1351,6 @@ pub fn managed_agent_avatar_url(command: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod hermes_tests;
+#[cfg(test)]
 mod tests;

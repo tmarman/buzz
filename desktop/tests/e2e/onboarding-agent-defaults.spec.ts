@@ -82,11 +82,15 @@ test("setup shows Hermes, Claude Code, and Codex as detected harnesses", async (
   await expect(page.getByTestId("onboarding-runtime-codex")).toBeVisible();
   const hermes = page.getByTestId("onboarding-runtime-hermes");
   await expect(hermes).toBeVisible();
-  await expect(hermes.getByRole("heading", { name: "Hermes Agent" })).toBeVisible();
+  await expect(
+    hermes.getByRole("heading", { name: "Hermes Agent" }),
+  ).toBeVisible();
   const hermesLogo = hermes.locator('img[src="/runtime-icons/hermes.png"]');
   await expect(hermesLogo).toBeVisible();
   await expect
-    .poll(() => hermesLogo.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .poll(() =>
+      hermesLogo.evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
     .toBeGreaterThan(0);
   await expect(page.getByTestId("onboarding-runtime-goose")).toHaveCount(0);
   await expect(page.getByTestId("onboarding-runtime-buzz-agent")).toHaveCount(

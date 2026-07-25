@@ -609,7 +609,7 @@ function RuntimeProvidersSection({
               orderedItems.length >= 3
                 ? "max-w-[896px] md:grid-cols-3"
                 : "max-w-[592px] md:grid-cols-2",
-            )
+            )}
           >
             {orderedItems.map((runtime) => (
               <RuntimeCard
