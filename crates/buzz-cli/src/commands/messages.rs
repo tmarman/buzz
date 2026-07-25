@@ -1,5 +1,6 @@
 use buzz_sdk::{DeleteMessageOptions, DiffMeta, ThreadRef, VoteDirection};
-use nostr::PublicKey;
+use chrono::DateTime;
+use nostr::{PublicKey, Tag, Timestamp};
 use uuid::Uuid;
 
 use crate::client::{normalize_events, normalize_write_response, BuzzClient};
@@ -476,8 +477,107 @@ pub struct SendMessageParams {
     pub content: String,
     pub kind: Option<u16>,
     pub reply_to: Option<String>,
+    pub created_at: Option<String>,
+    pub source_created_at: Option<String>,
+    pub source_id: Option<String>,
+    pub source_protocol: String,
     pub broadcast: bool,
     pub files: Vec<String>,
+}
+
+fn parse_timestamp_arg(value: &str, flag: &str) -> Result<u64, CliError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(CliError::Usage(format!("{flag} cannot be empty")));
+    }
+    if let Ok(timestamp) = value.parse::<u64>() {
+        return Ok(timestamp);
+    }
+    let timestamp = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| CliError::Usage(format!("{flag} must be RFC3339 or Unix seconds")))?
+        .timestamp();
+    u64::try_from(timestamp)
+        .map_err(|_| CliError::Usage(format!("{flag} must not be before the Unix epoch")))
+}
+
+fn bridged_source_tag(source_id: &str, protocol: &str) -> Result<Tag, CliError> {
+    let source_id = source_id.trim();
+    let protocol = protocol.trim();
+    if source_id.is_empty() || source_id.len() > 2048 || source_id.chars().any(char::is_control) {
+        return Err(CliError::Usage(
+            "--source-id must be 1-2048 printable characters".into(),
+        ));
+    }
+    if protocol.is_empty() || protocol.len() > 128 || protocol.chars().any(char::is_control) {
+        return Err(CliError::Usage(
+            "--source-protocol must be 1-128 printable characters".into(),
+        ));
+    }
+    Tag::parse(["proxy", source_id, protocol])
+        .map_err(|error| CliError::Other(format!("invalid NIP-48 proxy tag: {error}")))
+}
+
+fn bridged_source_timestamp_tag(timestamp: u64) -> Result<Tag, CliError> {
+    Tag::parse(["published_at".to_string(), timestamp.to_string()])
+        .map_err(|error| CliError::Other(format!("invalid source timestamp tag: {error}")))
+}
+
+fn existing_proxy_event_id(
+    events: &serde_json::Value,
+    source_id: &str,
+    protocol: &str,
+    author_pubkey: &str,
+) -> Option<String> {
+    events.as_array()?.iter().find_map(|event| {
+        // The proxy tuple is only an idempotency key within the current
+        // signer. A foreign author's preclaim must not suppress our import.
+        if event.get("pubkey").and_then(serde_json::Value::as_str) != Some(author_pubkey) {
+            return None;
+        }
+        let matches = event
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|tag| {
+                let Some(parts) = tag.as_array() else {
+                    return false;
+                };
+                parts.first().and_then(serde_json::Value::as_str) == Some("proxy")
+                    && parts.get(1).and_then(serde_json::Value::as_str) == Some(source_id)
+                    && parts.get(2).and_then(serde_json::Value::as_str) == Some(protocol)
+            });
+        if !matches {
+            return None;
+        }
+        let id = event.get("id")?.as_str()?;
+        validate_hex64(id).ok()?;
+        Some(id.to_string())
+    })
+}
+
+async fn find_existing_proxy_event(
+    client: &BuzzClient,
+    channel_id: &str,
+    source_id: &str,
+    protocol: &str,
+) -> Result<Option<String>, CliError> {
+    let author_pubkey = client.keys().public_key().to_hex();
+    let filter = serde_json::json!({
+        "kinds": [9, 45001, 45003],
+        "#h": [channel_id],
+        "authors": [author_pubkey],
+        "limit": 1000,
+    });
+    let response = client.query(&filter).await?;
+    let events = serde_json::from_str::<serde_json::Value>(&response)
+        .map_err(|error| CliError::Other(format!("failed to parse proxy lookup: {error}")))?;
+    Ok(existing_proxy_event_id(
+        &events,
+        source_id,
+        protocol,
+        &author_pubkey,
+    ))
 }
 
 pub async fn cmd_send_message(
@@ -494,6 +594,42 @@ pub async fn cmd_send_message(
         validate_hex64(r)?;
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
+    if p.source_created_at.is_some() && p.source_id.is_none() {
+        return Err(CliError::Usage(
+            "--source-created-at requires --source-id".into(),
+        ));
+    }
+    let created_at = p
+        .created_at
+        .as_deref()
+        .map(|value| parse_timestamp_arg(value, "--created-at"))
+        .transpose()?;
+    let source_created_at = p
+        .source_created_at
+        .as_deref()
+        .map(|value| parse_timestamp_arg(value, "--source-created-at"))
+        .transpose()?;
+    let source_tag = p
+        .source_id
+        .as_deref()
+        .map(|source_id| bridged_source_tag(source_id, &p.source_protocol))
+        .transpose()?;
+    if let Some(source_id) = p.source_id.as_deref() {
+        if let Some(event_id) =
+            find_existing_proxy_event(client, &p.channel_id, source_id, &p.source_protocol).await?
+        {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event_id": event_id,
+                    "accepted": true,
+                    "message": "source event already imported",
+                    "already_exists": true,
+                })
+            );
+            return Ok(());
+        }
+    }
 
     // Upload files and build imeta tags
     let mut media_tags: Vec<Vec<String>> = Vec::new();
@@ -537,7 +673,7 @@ pub async fn cmd_send_message(
 
     let mention_refs: Vec<&str> = auto_resolved.iter().map(|s| s.as_str()).collect();
 
-    let builder = match p.kind {
+    let mut builder = match p.kind {
         Some(45001) => {
             buzz_sdk::build_forum_post(channel_uuid, &final_content, &mention_refs, &media_tags)
                 .map_err(|e| CliError::Other(format!("build_forum_post failed: {e}")))?
@@ -570,6 +706,16 @@ pub async fn cmd_send_message(
             )))
         }
     };
+    if let Some(timestamp) = created_at {
+        builder = builder.custom_created_at(Timestamp::from(timestamp));
+    }
+    let mut provenance_tags = source_tag.into_iter().collect::<Vec<_>>();
+    if let Some(timestamp) = source_created_at {
+        provenance_tags.push(bridged_source_timestamp_tag(timestamp)?);
+    }
+    if !provenance_tags.is_empty() {
+        builder = builder.tags(provenance_tags);
+    }
 
     let event = client.sign_event(builder)?;
 
@@ -763,6 +909,10 @@ pub async fn dispatch(
             content,
             kind,
             reply_to,
+            created_at,
+            source_created_at,
+            source_id,
+            source_protocol,
             broadcast,
             files,
         } => {
@@ -773,6 +923,10 @@ pub async fn dispatch(
                     content,
                     kind,
                     reply_to,
+                    created_at,
+                    source_created_at,
+                    source_id,
+                    source_protocol,
                     broadcast,
                     files,
                 },
@@ -876,21 +1030,121 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_root_from_tags, match_profiles_by_name, parse_member_pubkeys};
+    use super::{
+        bridged_source_tag, bridged_source_timestamp_tag, existing_proxy_event_id,
+        find_root_from_tags, match_profiles_by_name, parse_member_pubkeys, parse_timestamp_arg,
+    };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
     };
+    use nostr::{Keys, Timestamp};
     use serde_json::json;
+    use uuid::Uuid;
 
     const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const PUBKEY: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const FOREIGN_PUBKEY: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
     // Three real pubkeys (lowercase 64-char hex) used by parse_member_pubkeys tests.
     // See the test's own comment on what `PublicKey::from_hex` actually validates.
     const PK_VALID_A: &str = "35c18ae273fccfaf80d629e20e7f8721b90499379addff533054acc2504c12b4";
     const PK_VALID_B: &str = "c6237ef84fa537c78dcee78efd2d4e59f728859c7f194da42ac51ededfa0be05";
     const PK_VALID_C: &str = "f4a42a97e594b77bdbd8ee35191c8b28a94a4cb871d96f32921558275421fb68";
+
+    #[test]
+    fn bridged_timestamp_accepts_rfc3339_and_unix_seconds() {
+        assert_eq!(
+            parse_timestamp_arg("2026-07-21T22:42:00Z", "--source-created-at").unwrap(),
+            1_784_673_720
+        );
+        assert_eq!(
+            parse_timestamp_arg("1784673720", "--source-created-at").unwrap(),
+            1_784_673_720
+        );
+    }
+
+    #[test]
+    fn bridged_timestamp_rejects_invalid_or_pre_epoch_values() {
+        assert!(parse_timestamp_arg("", "--source-created-at").is_err());
+        assert!(parse_timestamp_arg("yesterday", "--source-created-at").is_err());
+        assert!(parse_timestamp_arg("1969-12-31T23:59:59Z", "--source-created-at").is_err());
+    }
+
+    #[test]
+    fn bridged_source_timestamp_uses_published_at_tag() {
+        let tag = bridged_source_timestamp_tag(1_753_137_615).unwrap();
+        assert_eq!(tag.as_slice(), ["published_at", "1753137615"]);
+    }
+
+    #[test]
+    fn bridged_source_uses_nip48_proxy_tag() {
+        let tag = bridged_source_tag(
+            "urn:voxelbox:mail:agtcy_voxelbox_local:msg_123",
+            "agency.remote",
+        )
+        .unwrap();
+        assert_eq!(
+            tag.as_slice(),
+            [
+                "proxy",
+                "urn:voxelbox:mail:agtcy_voxelbox_local:msg_123",
+                "agency.remote",
+            ]
+        );
+    }
+
+    #[test]
+    fn proxy_lookup_is_exact_and_tolerates_malformed_events() {
+        let source = "urn:voxelbox:mail:agtcy_voxelbox_local:msg_123";
+        let events = json!([
+            {"id": ID_A, "tags": "bad"},
+            {"id": ID_B, "pubkey": PUBKEY, "tags": [["proxy", source, "activitypub"]]},
+            {"id": "not-an-event-id", "pubkey": PUBKEY, "tags": [["proxy", source, "agency.remote"]]},
+            {"id": ID_A, "pubkey": PUBKEY, "tags": [["proxy", source, "agency.remote"]]},
+        ]);
+        assert_eq!(
+            existing_proxy_event_id(&events, source, "agency.remote", PUBKEY).as_deref(),
+            Some(ID_A)
+        );
+        assert!(existing_proxy_event_id(&events, source, "rss", PUBKEY).is_none());
+    }
+
+    #[test]
+    fn proxy_lookup_rejects_foreign_author_preclaim() {
+        let source = "urn:voxelbox:mail:agtcy_voxelbox_local:msg_foreign";
+        let events = json!([
+            {
+                "id": ID_B,
+                "pubkey": FOREIGN_PUBKEY,
+                "tags": [["proxy", source, "agency.remote"]]
+            }
+        ]);
+        assert!(existing_proxy_event_id(&events, source, "agency.remote", PUBKEY).is_none());
+    }
+
+    #[test]
+    fn explicit_created_at_is_deterministic_and_keeps_provenance_tags() {
+        let keys = Keys::generate();
+        let source = "urn:voxelbox:mail:agtcy_voxelbox_local:msg_deterministic";
+        let protocol = "agency.remote";
+        let source_tag = bridged_source_tag(source, protocol).unwrap();
+        let published_tag = bridged_source_timestamp_tag(1_753_137_615).unwrap();
+
+        let sign_import = || {
+            let builder = buzz_sdk::build_message(Uuid::nil(), "imported", None, &[], false, &[])
+                .unwrap()
+                .custom_created_at(Timestamp::from(1_784_673_720))
+                .tags([source_tag.clone(), published_tag.clone()]);
+            builder.sign_with_keys(&keys).unwrap()
+        };
+
+        let first = sign_import();
+        let retry = sign_import();
+        assert_eq!(first.id, retry.id);
+        assert!(first.tags.iter().any(|tag| tag == &source_tag));
+        assert!(first.tags.iter().any(|tag| tag == &published_tag));
+    }
 
     #[test]
     fn root_marker_wins_over_reply_marker() {

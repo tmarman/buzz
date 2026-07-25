@@ -351,6 +351,18 @@ pub enum MessagesCmd {
         /// Event ID to reply to (creates a thread)
         #[arg(long)]
         reply_to: Option<String>,
+        /// Override the signed Nostr event time (normally omit; relays enforce clock skew)
+        #[arg(long)]
+        created_at: Option<String>,
+        /// Original source timestamp (RFC3339 or Unix seconds; emits published_at provenance)
+        #[arg(long, requires = "source_id")]
+        source_created_at: Option<String>,
+        /// Universally unique source object ID (adds a NIP-48 proxy tag)
+        #[arg(long)]
+        source_id: Option<String>,
+        /// Source protocol for --source-id
+        #[arg(long, default_value = "agency.remote")]
+        source_protocol: String,
         /// Also publish to the Nostr network
         #[arg(long, default_value_t = false)]
         broadcast: bool,
@@ -1786,6 +1798,43 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn messages_send_accepts_explicit_event_and_source_timestamps() {
+        let cli = Cli::try_parse_from([
+            "buzz",
+            "messages",
+            "send",
+            "--channel",
+            "00000000-0000-0000-0000-000000000000",
+            "--content",
+            "imported",
+            "--created-at",
+            "2026-07-21T22:42:00Z",
+            "--source-id",
+            "urn:voxelbox:mail:msg_123",
+            "--source-protocol",
+            "agency.remote",
+            "--source-created-at",
+            "1784673720",
+        ])
+        .expect("message timestamp flags should parse");
+
+        let Cmd::Messages(MessagesCmd::Send {
+            created_at,
+            source_created_at,
+            source_id,
+            source_protocol,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected messages send command");
+        };
+        assert_eq!(created_at.as_deref(), Some("2026-07-21T22:42:00Z"));
+        assert_eq!(source_created_at.as_deref(), Some("1784673720"));
+        assert_eq!(source_id.as_deref(), Some("urn:voxelbox:mail:msg_123"));
+        assert_eq!(source_protocol, "agency.remote");
     }
 
     #[test]
