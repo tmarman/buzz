@@ -190,7 +190,7 @@ const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         context_limit_env_var: None,
         required_normalized_fields: &[],
         login_hint: Some("Run `hermes model` to configure a provider and model."),
-        auth_probe_args: Some(&["hermes", "config", "get", "model.provider"]),
+        auth_probe_args: Some(&["hermes", "config", "check"]),
     },
     KnownAcpRuntime {
         id: "buzz-agent",

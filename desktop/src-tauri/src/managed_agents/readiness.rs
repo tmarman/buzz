@@ -289,11 +289,9 @@ fn collect_missing_requirements(
             rt,
         ),
         "codex" => cli_login::requirements(&["codex", "login", "status"], "run `codex login`", rt),
-        "hermes" => cli_login::requirements(
-            &["hermes", "config", "get", "model.provider"],
-            "run `hermes model`",
-            rt,
-        ),
+        "hermes" => {
+            cli_login::requirements(&["hermes", "config", "check"], "run `hermes model`", rt)
+        }
         _ => vec![],
     }
 }
@@ -517,7 +515,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn hermes_unconfigured_provider_is_not_ready() {
+    fn hermes_invalid_config_is_not_ready() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = crate::managed_agents::lock_path_mutex();

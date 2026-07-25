@@ -30,7 +30,7 @@ fn runtime_contract_is_acp_native() {
     assert!(runtime.required_normalized_fields.is_empty());
     assert_eq!(
         runtime.auth_probe_args,
-        Some(&["hermes", "config", "get", "model.provider"][..])
+        Some(&["hermes", "config", "check"][..])
     );
     assert_eq!(
         runtime.login_hint,
