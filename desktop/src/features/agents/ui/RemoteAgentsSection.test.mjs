@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  findVoxelboxManagedAgent,
   isVoxelboxAgentJoined,
   remoteAgentProjectNames,
   remoteAgentProvenanceLabel,
+  voxelboxRemoteAgentLabel,
 } from "./RemoteAgentsSection.tsx";
+import {
+  isVoxelboxManagedAgent,
+  isVoxelboxPersona,
+} from "../lib/voxelboxAgentDiscovery.ts";
 
 const REMOTE_PUBKEY = "a".repeat(64);
 
@@ -17,6 +23,11 @@ test("remote agent provenance uses the published agent type", () => {
   );
   assert.equal(remoteAgentProvenanceLabel("agent"), "Remote");
   assert.equal(remoteAgentProvenanceLabel(""), "Remote");
+  assert.equal(
+    voxelboxRemoteAgentLabel("workspace-steward"),
+    "Remote · Voxelbox · Workspace Steward",
+  );
+  assert.equal(voxelboxRemoteAgentLabel(""), "Remote · Voxelbox");
 });
 
 test("remote agent projects include declared and observed participation", () => {
@@ -125,5 +136,79 @@ test("Voxelbox participation is verified by public key with a legacy name fallba
       { ...relayAgents[0], agentType: "voxelbox" },
     ]),
     true,
+  );
+});
+
+test("joined Voxelbox agents retain remote provenance after Buzz manages them", () => {
+  const managedAgent = {
+    pubkey: "b".repeat(64),
+    name: "smithy",
+    agentCommand: "voxelbox-agent",
+    envVars: {
+      VOXELBOX_STEWARD: "smithy",
+      VOXELBOX_BUZZ_MODE: "conversation",
+    },
+  };
+  const discovered = {
+    name: "smithy",
+    agentType: "workspace-steward",
+    description: "Tools forge",
+    org: "voxelbox-ai",
+    avatarUrl: null,
+    hasVoice: true,
+    voiceDescription: "Direct",
+    identityReady: true,
+    publicKey: "b".repeat(64),
+  };
+
+  assert.equal(isVoxelboxManagedAgent(managedAgent), true);
+  assert.equal(
+    findVoxelboxManagedAgent(discovered, [managedAgent]),
+    managedAgent,
+  );
+  assert.equal(isVoxelboxAgentJoined(discovered, [], [managedAgent]), true);
+  assert.equal(
+    isVoxelboxManagedAgent({
+      ...managedAgent,
+      agentCommand: "",
+      envVars: {},
+    }),
+    false,
+  );
+  assert.equal(
+    isVoxelboxManagedAgent({
+      ...managedAgent,
+      agentCommand: "/opt/agency/bin/voxelbox-agent",
+      envVars: {},
+    }),
+    true,
+  );
+});
+
+test("Voxelbox persona definitions stay in the remote roster", () => {
+  const persona = {
+    runtime: null,
+    envVars: {
+      VOXELBOX_STEWARD: "smithy",
+      VOXELBOX_BUZZ_MODE: "conversation",
+    },
+  };
+
+  assert.equal(isVoxelboxPersona(persona), true);
+  assert.equal(
+    isVoxelboxPersona({
+      ...persona,
+      runtime: "voxelbox-agent",
+      envVars: {},
+    }),
+    true,
+  );
+  assert.equal(
+    isVoxelboxPersona({
+      ...persona,
+      runtime: "claude",
+      envVars: {},
+    }),
+    false,
   );
 });

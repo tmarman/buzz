@@ -1,6 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 
 import { invokeTauri } from "@/shared/api/tauri";
+import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
 import {
   agencyRuntimeEndpoint,
   fetchAgencyRuntimeConfig,
@@ -19,6 +20,27 @@ export type VoxelboxRemoteAgent = {
 };
 
 const HIDDEN_REMOTE_AGENT_NAMES = new Set(["liquid"]);
+
+export function isVoxelboxManagedAgent(agent: ManagedAgent): boolean {
+  const runtimeCommand = agent.agentCommand
+    .trim()
+    .split(/[\\/]/)
+    .at(-1)
+    ?.toLowerCase();
+  return (
+    Boolean(agent.envVars.VOXELBOX_STEWARD?.trim()) ||
+    agent.envVars.VOXELBOX_BUZZ_MODE === "conversation" ||
+    runtimeCommand === "voxelbox-agent"
+  );
+}
+
+export function isVoxelboxPersona(persona: AgentPersona): boolean {
+  return (
+    Boolean(persona.envVars.VOXELBOX_STEWARD?.trim()) ||
+    persona.envVars.VOXELBOX_BUZZ_MODE === "conversation" ||
+    persona.runtime?.trim().toLowerCase() === "voxelbox-agent"
+  );
+}
 
 export function shouldProjectVoxelboxAgent(name: string): boolean {
   return !HIDDEN_REMOTE_AGENT_NAMES.has(name.trim().toLowerCase());

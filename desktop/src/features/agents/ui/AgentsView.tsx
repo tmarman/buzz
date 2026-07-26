@@ -28,6 +28,10 @@ import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import {
+  isVoxelboxManagedAgent,
+  isVoxelboxPersona,
+} from "@/features/agents/lib/voxelboxAgentDiscovery";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -75,6 +79,20 @@ export function AgentsView() {
   // most providers persist the model as a provider env var (e.g. DATABRICKS_MODEL)
   // or inherit a baked build default, leaving `globalConfig.model` null.
   const configuredGlobalModel = inheritedDefaults.model.value;
+  const localManagedAgents = React.useMemo(
+    () =>
+      agents.managedAgents.filter((agent) => !isVoxelboxManagedAgent(agent)),
+    [agents.managedAgents],
+  );
+  const voxelboxManagedAgents = React.useMemo(
+    () => agents.managedAgents.filter(isVoxelboxManagedAgent),
+    [agents.managedAgents],
+  );
+  const localPersonas = React.useMemo(
+    () =>
+      personas.libraryPersonas.filter((persona) => !isVoxelboxPersona(persona)),
+    [personas.libraryPersonas],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only; personas.handleImportSnapshotFile and teamActions.handleImportTeamSnapshotFile are stable
   React.useEffect(() => {
@@ -144,7 +162,7 @@ export function AgentsView() {
               defaultModel={inheritedDefaults.model.value}
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
-              agents={agents.managedAgents}
+              agents={localManagedAgents}
               agentsError={
                 agents.managedAgentsQuery.error instanceof Error
                   ? agents.managedAgentsQuery.error
@@ -168,7 +186,7 @@ export function AgentsView() {
               }}
               // Persona props
               canChooseCatalog={personas.catalogPersonas.length > 0}
-              personas={personas.libraryPersonas}
+              personas={localPersonas}
               personasError={
                 personas.personasQuery.error instanceof Error
                   ? personas.personasQuery.error
@@ -210,6 +228,7 @@ export function AgentsView() {
               }
               isLoading={agents.relayAgentsQuery.isLoading}
               managedPubkeys={agents.managedPubkeys}
+              managedAgents={voxelboxManagedAgents}
               onOpenAgentProfile={(pubkey, options) => {
                 openProfilePanel?.(pubkey, options);
               }}

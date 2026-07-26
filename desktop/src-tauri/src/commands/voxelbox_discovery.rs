@@ -1,13 +1,17 @@
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use nostr::{Keys, ToBech32};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
-use crate::commands::agency_runtime_endpoint;
+use crate::commands::{
+    agency_runtime_endpoint,
+    voxelbox_agent_profile::{
+        enrich_agent_identity, is_safe_agent_name, voxelbox_agent_summaries,
+        voxelbox_identity_root, VoxelboxAgentSummary,
+    },
+};
 use crate::managed_agents::{
     BackendKind, CreateManagedAgentRequest, ManagedAgentSummary, RespondTo,
 };
@@ -114,33 +118,6 @@ pub struct VoxelboxSpaceSummary {
     stewards: Vec<String>,
     #[serde(default)]
     surfaces: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VoxelboxAgentSummary {
-    name: String,
-    #[serde(alias = "type")]
-    agent_type: String,
-    description: String,
-    org: String,
-    #[serde(default)]
-    avatar_url: Option<String>,
-    #[serde(default)]
-    has_voice: bool,
-    #[serde(default)]
-    voice_description: String,
-    #[serde(default)]
-    identity_ready: bool,
-    #[serde(default)]
-    pubkey: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VoiceDesign {
-    instruct: Option<String>,
-    ref_text: Option<String>,
-    seed_line: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -637,91 +614,6 @@ fn voxelbox_space_summaries(spaces: Vec<VoxelboxSpaceSummary>) -> Vec<VoxelboxSp
         .collect()
 }
 
-fn voxelbox_agent_summaries(agents: Vec<VoxelboxAgentSummary>) -> Vec<VoxelboxAgentSummary> {
-    agents
-        .into_iter()
-        .filter_map(|mut agent| {
-            agent.name = agent.name.trim().to_string();
-            agent.agent_type = agent.agent_type.trim().to_string();
-            agent.description = agent.description.trim().to_string();
-            agent.org = agent.org.trim().to_string();
-            (!agent.name.is_empty()).then_some(agent)
-        })
-        .collect()
-}
-
-fn voxelbox_identity_root() -> PathBuf {
-    if let Ok(root) = std::env::var("VOXELBOX_HOME") {
-        let root = root.trim();
-        if !root.is_empty() {
-            return PathBuf::from(root);
-        }
-    }
-
-    dirs::home_dir().unwrap_or_default().join(".voxelbox")
-}
-
-fn enrich_agent_identity(
-    mut agent: VoxelboxAgentSummary,
-    voxelbox_root: &Path,
-) -> VoxelboxAgentSummary {
-    if !is_safe_agent_name(&agent.name) {
-        return agent;
-    }
-
-    let identity_dir = voxelbox_root
-        .join("agents")
-        .join(&agent.name)
-        .join("identity");
-    if identity_dir.join("avatar.png").is_file() {
-        if let Ok(bytes) = std::fs::read(identity_dir.join("avatar.png")) {
-            agent.avatar_url = Some(format!(
-                "data:image/png;base64,{}",
-                BASE64_STANDARD.encode(bytes)
-            ));
-        }
-    }
-
-    if identity_dir.join("voice.wav").is_file() {
-        agent.has_voice = true;
-        agent.voice_description = voice_description(&identity_dir);
-    }
-    let nostr_dir = identity_dir.join("nostr");
-    if nostr_dir.join("credential").is_file() {
-        if let Ok(nsec) = std::fs::read_to_string(nostr_dir.join("nsec")) {
-            if let Ok(keys) = Keys::parse(nsec.trim()) {
-                agent.identity_ready = true;
-                agent.pubkey = Some(keys.public_key().to_hex());
-            }
-        }
-    }
-
-    agent
-}
-
-fn is_safe_agent_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '-')
-}
-
-fn voice_description(identity_dir: &Path) -> String {
-    let Ok(data) = std::fs::read(identity_dir.join("voice_design.json")) else {
-        return String::new();
-    };
-    let Ok(design) = serde_json::from_slice::<VoiceDesign>(&data) else {
-        return String::new();
-    };
-
-    [design.instruct, design.ref_text, design.seed_line]
-        .into_iter()
-        .flatten()
-        .map(|value| value.trim().to_string())
-        .find(|value| !value.is_empty())
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -950,6 +842,24 @@ mod tests {
         assert_eq!(agents[0].agent_type, "orchestrator");
         assert_eq!(agents[0].description, "Connects work");
         assert_eq!(agents[0].org, "global");
+    }
+
+    #[test]
+    fn standard_public_agent_profile_does_not_require_legacy_fields() {
+        let agent = serde_json::from_value::<VoxelboxAgentSummary>(serde_json::json!({
+            "schema": "agent.public-profile/v1",
+            "id": "urn:uuid:0df94a1d-9f6b-4695-999c-d894b0fe92fb",
+            "agency_id": "urn:uuid:ad44f881-a3a9-4a1f-9962-b3608eb2a19e",
+            "name": "smithy",
+            "display_name": "Smithy",
+            "description": "Runtime steward"
+        }))
+        .expect("standard public profile");
+
+        assert_eq!(agent.name, "smithy");
+        assert_eq!(agent.agent_type, "");
+        assert_eq!(agent.description, "Runtime steward");
+        assert_eq!(agent.org, "");
     }
 
     #[test]

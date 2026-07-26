@@ -54,6 +54,7 @@ mod surface_sessions;
 mod team_snapshot;
 mod teams;
 mod updater;
+mod voxelbox_agent_profile;
 mod voxelbox_discovery;
 mod voxelbox_work;
 mod window_chrome;

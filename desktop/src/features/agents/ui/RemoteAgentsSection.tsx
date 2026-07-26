@@ -5,6 +5,7 @@ import { isTauri } from "@tauri-apps/api/core";
 
 import {
   fetchVoxelboxRemoteAgents,
+  isVoxelboxManagedAgent,
   type VoxelboxRemoteAgent,
 } from "@/features/agents/lib/voxelboxAgentDiscovery";
 import { attachManagedAgentToChannel } from "@/features/agents/channelAgents";
@@ -14,7 +15,7 @@ import {
 } from "@/features/agents/hooks";
 import { resolveManagedAgentAvatarUrl } from "@/features/agents/ui/managedAgentAvatar";
 import { useChannelsQuery } from "@/features/channels/hooks";
-import type { RelayAgent } from "@/shared/api/types";
+import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
 import {
   joinVoxelboxManagedAgent,
   removeChannelMember,
@@ -61,6 +62,16 @@ export function remoteAgentProvenanceLabel(agentType: string): string {
   return `Remote · ${label}`;
 }
 
+export function voxelboxRemoteAgentLabel(agentType: string): string {
+  const role = agentType
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+  return [remoteAgentProvenanceLabel("voxelbox"), role]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function remoteAgentProjectNames(
   pubkey: string,
   projects: readonly Project[],
@@ -84,7 +95,12 @@ export function remoteAgentProjectNames(
 export function isVoxelboxAgentJoined(
   agent: VoxelboxRemoteAgent,
   relayAgents: readonly RelayAgent[],
+  managedAgents: readonly ManagedAgent[] = [],
 ): boolean {
+  if (findVoxelboxManagedAgent(agent, managedAgents)) {
+    return true;
+  }
+
   if (agent.publicKey) {
     const publicKey = normalizePubkey(agent.publicKey);
     return relayAgents.some(
@@ -103,12 +119,14 @@ export function isVoxelboxAgentJoined(
 export function RemoteAgentsSection({
   error,
   isLoading,
+  managedAgents,
   managedPubkeys,
   onOpenAgentProfile,
   relayAgents,
 }: {
   error: Error | null;
   isLoading: boolean;
+  managedAgents: ManagedAgent[];
   managedPubkeys: Set<string>;
   onOpenAgentProfile: (
     pubkey: string,
@@ -153,9 +171,20 @@ export function RemoteAgentsSection({
   const availableVoxelboxAgents = React.useMemo(
     () =>
       (voxelboxAgentsQuery.data ?? [])
-        .filter((agent) => !isVoxelboxAgentJoined(agent, relayAgents))
+        .filter(
+          (agent) => !isVoxelboxAgentJoined(agent, relayAgents, managedAgents),
+        )
         .sort((left, right) => left.name.localeCompare(right.name)),
-    [relayAgents, voxelboxAgentsQuery.data],
+    [managedAgents, relayAgents, voxelboxAgentsQuery.data],
+  );
+  const joinedVoxelboxAgents = React.useMemo(
+    () =>
+      (voxelboxAgentsQuery.data ?? [])
+        .filter((agent) =>
+          isVoxelboxAgentJoined(agent, relayAgents, managedAgents),
+        )
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [managedAgents, relayAgents, voxelboxAgentsQuery.data],
   );
   const joinMutation = useMutation({
     mutationFn: async (agent: VoxelboxRemoteAgent) => {
@@ -265,7 +294,10 @@ export function RemoteAgentsSection({
       ),
     );
   }, [availableVoxelboxAgents, searchQuery]);
-  const remoteAgentCount = otherAgents.length + availableVoxelboxAgents.length;
+  const remoteAgentCount =
+    otherAgents.length +
+    joinedVoxelboxAgents.length +
+    availableVoxelboxAgents.length;
   const isRemoteAgentsLoading = isLoading || voxelboxAgentsQuery.isLoading;
 
   return (
@@ -299,6 +331,7 @@ export function RemoteAgentsSection({
       {isRemoteAgentsLoading ? (
         <p className="text-sm text-muted-foreground">Loading remote agents…</p>
       ) : sortedAgents.length > 0 ||
+        joinedVoxelboxAgents.length > 0 ||
         filteredAvailableVoxelboxAgents.length > 0 ? (
         <div className={REMOTE_AGENT_GRID_CLASS}>
           {sortedAgents.map((agent) => (
@@ -311,6 +344,14 @@ export function RemoteAgentsSection({
                 projects,
                 summaries,
               )}
+            />
+          ))}
+          {joinedVoxelboxAgents.map((agent) => (
+            <JoinedVoxelboxAgentCard
+              agent={agent}
+              key={`${agent.org}:${agent.name}`}
+              managedAgent={findVoxelboxManagedAgent(agent, managedAgents)}
+              onOpenAgentProfile={onOpenAgentProfile}
             />
           ))}
           {filteredAvailableVoxelboxAgents.map((agent) => (
@@ -418,6 +459,85 @@ export function RemoteAgentsSection({
   );
 }
 
+export function findVoxelboxManagedAgent(
+  agent: VoxelboxRemoteAgent,
+  managedAgents: readonly ManagedAgent[],
+): ManagedAgent | undefined {
+  if (agent.publicKey) {
+    const publicKey = normalizePubkey(agent.publicKey);
+    const byPublicKey = managedAgents.find(
+      (candidate) => normalizePubkey(candidate.pubkey) === publicKey,
+    );
+    if (byPublicKey) return byPublicKey;
+  }
+
+  const name = agent.name.trim().toLowerCase();
+  return managedAgents.find(
+    (candidate) =>
+      isVoxelboxManagedAgent(candidate) &&
+      (candidate.envVars.VOXELBOX_STEWARD?.trim().toLowerCase() === name ||
+        candidate.name.trim().toLowerCase() === name),
+  );
+}
+
+function JoinedVoxelboxAgentCard({
+  agent,
+  managedAgent,
+  onOpenAgentProfile,
+}: {
+  agent: VoxelboxRemoteAgent;
+  managedAgent: ManagedAgent | undefined;
+  onOpenAgentProfile: (
+    pubkey: string,
+    options?: ProfilePanelOpenOptions,
+  ) => void;
+}) {
+  const pubkey = agent.publicKey ?? managedAgent?.pubkey ?? null;
+  const running =
+    managedAgent?.status === "running" || managedAgent?.status === "deployed";
+
+  return (
+    <AgentIdentityCard
+      ariaLabel={`${agent.name} joined remote agent profile`}
+      avatar={
+        agent.avatarUrl ? undefined : (
+          <VoxelboxAgentFallbackIcon agentType={agent.agentType} />
+        )
+      }
+      avatarUrl={agent.avatarUrl ?? managedAgent?.avatarUrl ?? undefined}
+      dataTestId={`joined-voxelbox-agent-${agent.name}`}
+      description={agent.description}
+      label={agent.name}
+      modelLabel={voxelboxRemoteAgentLabel(agent.agentType)}
+      onClick={pubkey ? () => onOpenAgentProfile(pubkey) : undefined}
+      statusBadge={
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+          <Badge variant={running ? "secondary" : "outline"}>
+            {running ? "Running" : "Joined"}
+          </Badge>
+          {agent.hasVoice ? (
+            <Badge
+              title={agent.voiceDescription || "Voice profile available"}
+              variant="outline"
+            >
+              Voice
+            </Badge>
+          ) : null}
+          {agent.org ? (
+            <Badge
+              className="max-w-full truncate normal-case tracking-normal"
+              title={agent.description || agent.org}
+              variant="secondary"
+            >
+              {agent.org}
+            </Badge>
+          ) : null}
+        </div>
+      }
+    />
+  );
+}
+
 function RemoteAgentCard({
   agent,
   onOpenAgentProfile,
@@ -502,9 +622,7 @@ function AvailableVoxelboxAgentCard({
       dataTestId={`available-voxelbox-agent-${agent.name}`}
       description={agent.description}
       label={agent.name}
-      modelLabel={`${remoteAgentProvenanceLabel("voxelbox")} · ${agent.agentType
-        .replace(/[-_]+/g, " ")
-        .replace(/\b\w/g, (character) => character.toUpperCase())}`}
+      modelLabel={voxelboxRemoteAgentLabel(agent.agentType)}
       statusBadge={
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
           <Badge variant="outline">
