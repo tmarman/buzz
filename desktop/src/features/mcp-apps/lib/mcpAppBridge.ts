@@ -21,7 +21,7 @@ const HOST_INFO = { name: "Buzz Desktop", version: "1.0.0" };
 
 export type McpAppMessage = {
   role: "user";
-  content: unknown[];
+  content: unknown;
 };
 
 export type McpAppModelContext = {
