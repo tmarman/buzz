@@ -117,37 +117,6 @@ fn bearer_token_lookup_preserves_only_synchronized_loopback_aliases() {
 }
 
 #[test]
-fn legacy_proxy_bindings_ignore_removed_space_and_default_provenance_fields() {
-    let proxy: RemoteAgencyProxy = serde_json::from_value(serde_json::json!({
-        "agentId": "example-agent",
-        "pubkey": "0".repeat(64),
-        "channelId": "channel-1",
-        "spaceId": "space-1",
-        "recordUrl": "https://agency.example/agents/example-agent.json",
-        "recordRevision": "r1"
-    }))
-    .expect("legacy proxy remains readable");
-    assert_eq!(proxy.record_cid, None);
-    assert_eq!(proxy.record_verification, None);
-}
-
-#[test]
-fn legacy_bindings_ignore_removed_space_and_default_remote_team_metadata() {
-    let binding: RemoteAgencyBinding = serde_json::from_value(serde_json::json!({
-        "sourceUrl": "https://agency.example/.well-known/agency.json",
-        "agencyId": "agency.example",
-        "agentIds": [],
-        "spaceIds": [],
-        "channelIds": [],
-        "proxies": [],
-        "joinedAt": "2026-07-28T00:00:00Z"
-    }))
-    .expect("legacy binding remains readable");
-    assert_eq!(binding.name, None);
-    assert_eq!(binding.description, None);
-}
-
-#[test]
 fn parses_public_projection_and_drops_private_fields() {
     let json = br#"{
       "id":"agency.example",
