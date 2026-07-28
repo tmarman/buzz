@@ -86,7 +86,7 @@ export function findRemoteAgencyBinding(
 }
 
 /**
- * Build the exact adapter input for a reviewed Remote Agency participant.
+ * Build the exact adapter input for a reviewed Remote Team participant.
  * The adapter requires a public Agent Record and an explicitly reviewed A2A
  * endpoint. Secrets are supplied by the operator through the local Buzz
  * process environment and never enter this object.
@@ -110,7 +110,7 @@ export function buildRemoteAgencyManagedAgentInput(
       (context.scopeRef !== undefined && !isAbsoluteUri(context.scopeRef)))
   ) {
     throw new Error(
-      "Remote Agency invocation context must use absolute URI references",
+      "Remote Team invocation context must use absolute URI references",
     );
   }
   return {

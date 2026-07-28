@@ -124,10 +124,10 @@ fn remote_agency_bearer_token_keys(
             let mut endpoint_alias = endpoint.clone();
             record_alias
                 .set_host(Some(host))
-                .map_err(|_| "Remote Agency record loopback alias is invalid".to_string())?;
+                .map_err(|_| "Remote Team record loopback alias is invalid".to_string())?;
             endpoint_alias
                 .set_host(Some(host))
-                .map_err(|_| "Remote Agency endpoint loopback alias is invalid".to_string())?;
+                .map_err(|_| "Remote Team endpoint loopback alias is invalid".to_string())?;
             let key = remote_agency_bearer_token_key_from_urls(&record_alias, &endpoint_alias);
             if !keys.contains(&key) {
                 keys.push(key);
@@ -372,7 +372,7 @@ fn parse_preview_document(
 ) -> Result<RemoteAgencyDescriptor, String> {
     let merged = merge_linked_collections(document, linked);
     let bytes = serde_json::to_vec(&merged)
-        .map_err(|error| format!("failed to normalize Remote Agency descriptor: {error}"))?;
+        .map_err(|error| format!("failed to normalize Remote Team descriptor: {error}"))?;
     parse_remote_agency_document(source_url, &bytes)
 }
 
@@ -515,28 +515,28 @@ fn extension_uris(document: &Value, agency: &Value) -> Vec<String> {
 
 /// Validate a descriptor URL before any network request is made.
 pub fn validate_remote_agency_url(raw: &str) -> Result<Url, String> {
-    let parsed = Url::parse(raw.trim()).map_err(|_| "Remote Agency URL is invalid".to_string())?;
+    let parsed = Url::parse(raw.trim()).map_err(|_| "Remote Team URL is invalid".to_string())?;
     if parsed.username() != "" || parsed.password().is_some() {
-        return Err("Remote Agency URL must not contain credentials".to_string());
+        return Err("Remote Team URL must not contain credentials".to_string());
     }
     let host = parsed
         .host_str()
-        .ok_or_else(|| "Remote Agency URL must include a host".to_string())?;
+        .ok_or_else(|| "Remote Team URL must include a host".to_string())?;
     let host = normalized_host(host);
     let local_host = is_loopback_host(&host);
     if parsed.scheme() != "https" && !(parsed.scheme() == "http" && local_host) {
         return Err(
-            "Remote Agency URL must use HTTPS (HTTP is allowed only for local development)"
+            "Remote Team URL must use HTTPS (HTTP is allowed only for local development)"
                 .to_string(),
         );
     }
     if host.ends_with(".local") || host.contains('%') {
-        return Err("Remote Agency URL host is not allowed".to_string());
+        return Err("Remote Team URL host is not allowed".to_string());
     }
     if let Ok(address) = host.parse::<IpAddr>() {
         let private = is_private_address(address);
         if private && !(local_host && parsed.scheme() == "http") {
-            return Err("Remote Agency URL must not target a private network".to_string());
+            return Err("Remote Team URL must not target a private network".to_string());
         }
     }
     Ok(parsed)
@@ -550,18 +550,18 @@ pub fn parse_remote_agency_document(
     bytes: &[u8],
 ) -> Result<RemoteAgencyDescriptor, String> {
     if bytes.len() > MAX_DOCUMENT_BYTES {
-        return Err("Remote Agency descriptor exceeds the 1 MiB limit".to_string());
+        return Err("Remote Team descriptor exceeds the 1 MiB limit".to_string());
     }
     let source = validate_remote_agency_url(source_url)?;
     let document: Value = serde_json::from_slice(bytes)
-        .map_err(|_| "Remote Agency descriptor is not valid JSON".to_string())?;
+        .map_err(|_| "Remote Team descriptor is not valid JSON".to_string())?;
     let agency = document
         .get("agency")
         .filter(|value| value.is_object())
         .unwrap_or(&document);
     let agency_id = id(agency.get("id").or_else(|| agency.get("identifier")))
         .or_else(|| id(agency.get("agency_id")))
-        .ok_or_else(|| "Remote Agency descriptor is missing an agency id".to_string())?;
+        .ok_or_else(|| "Remote Team descriptor is missing an agency id".to_string())?;
     let name = text(agency.get("name")).unwrap_or_else(|| agency_id.clone());
     let agents_value = agency
         .get("agents")
@@ -637,26 +637,26 @@ fn load_bindings(app: &AppHandle) -> Result<Vec<RemoteAgencyBinding>, String> {
 async fn public_addresses(source: &Url) -> Result<Vec<std::net::SocketAddr>, String> {
     let host = source
         .host_str()
-        .ok_or_else(|| "Remote Agency URL must include a host".to_string())?;
+        .ok_or_else(|| "Remote Team URL must include a host".to_string())?;
     let host = normalized_host(host);
     let port = source.port_or_known_default().unwrap_or(443);
     let addresses = tokio::net::lookup_host((host.as_str(), port))
         .await
-        .map_err(|_| "Remote Agency host could not be resolved".to_string())?;
+        .map_err(|_| "Remote Team host could not be resolved".to_string())?;
     let addresses: Vec<_> = addresses.collect();
     if addresses.is_empty() {
-        return Err("Remote Agency host did not resolve to an address".to_string());
+        return Err("Remote Team host did not resolve to an address".to_string());
     }
     let local_http = source.scheme() == "http" && is_loopback_host(&host);
     if local_http {
         if addresses.iter().any(|address| !address.ip().is_loopback()) {
-            return Err("Local Remote Agency URL resolved outside loopback".to_string());
+            return Err("Local Remote Team URL resolved outside loopback".to_string());
         }
     } else if addresses
         .iter()
         .any(|address| is_private_address(address.ip()))
     {
-        return Err("Remote Agency URL resolved to a private network".to_string());
+        return Err("Remote Team URL resolved to a private network".to_string());
     }
     Ok(addresses)
 }
@@ -665,48 +665,48 @@ async fn fetch_json_document(source: &Url) -> Result<Value, String> {
     let addresses = public_addresses(source).await?;
     let host = source
         .host_str()
-        .ok_or_else(|| "Remote Agency URL must include a host".to_string())?;
+        .ok_or_else(|| "Remote Team URL must include a host".to_string())?;
     let host = normalized_host(host);
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(FETCH_TIMEOUT)
         .resolve_to_addrs(&host, &addresses)
         .build()
-        .map_err(|error| format!("failed to create Remote Agency client: {error}"))?;
+        .map_err(|error| format!("failed to create Remote Team client: {error}"))?;
     let mut response = client
         .get(source.clone())
         .header(reqwest::header::ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| format!("Remote Agency request failed: {error}"))?;
+        .map_err(|error| format!("Remote Team request failed: {error}"))?;
     if response.status().is_redirection() {
-        return Err("Remote Agency redirects are not allowed".to_string());
+        return Err("Remote Team redirects are not allowed".to_string());
     }
     if response.status().as_u16() == 401 || response.status().as_u16() == 403 {
-        return Err("Remote Agency linked projection requires authentication; use a public record or configure adapter credentials".to_string());
+        return Err("Remote Team linked projection requires authentication; use a public record or configure adapter credentials".to_string());
     }
     if !response.status().is_success() {
-        return Err(format!("Remote Agency returned HTTP {}", response.status()));
+        return Err(format!("Remote Team returned HTTP {}", response.status()));
     }
     if response
         .content_length()
         .is_some_and(|size| size > MAX_DOCUMENT_BYTES as u64)
     {
-        return Err("Remote Agency descriptor exceeds the 1 MiB limit".to_string());
+        return Err("Remote Team descriptor exceeds the 1 MiB limit".to_string());
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| format!("failed to read Remote Agency descriptor: {error}"))?
+        .map_err(|error| format!("failed to read Remote Team descriptor: {error}"))?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_DOCUMENT_BYTES {
-            return Err("Remote Agency descriptor exceeds the 1 MiB limit".to_string());
+            return Err("Remote Team descriptor exceeds the 1 MiB limit".to_string());
         }
         bytes.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&bytes)
-        .map_err(|_| "Remote Agency descriptor is not valid JSON".to_string())
+        .map_err(|_| "Remote Team descriptor is not valid JSON".to_string())
 }
 
 #[tauri::command]
@@ -719,7 +719,7 @@ pub async fn preview_remote_agency(source_url: String) -> Result<RemoteAgencyDes
     }
     let mut linked_documents = Vec::new();
     for (kind, url) in links.into_iter().take(4) {
-        let linked_url = Url::parse(&url).map_err(|_| "Remote Agency linked URL is invalid")?;
+        let linked_url = Url::parse(&url).map_err(|_| "Remote Team linked URL is invalid")?;
         let linked_document = fetch_json_document(&linked_url).await?;
         linked_documents.push((kind, linked_document));
     }
@@ -744,12 +744,12 @@ pub fn store_remote_agency_bearer_token(
     }
     if token.len() > MAX_BEARER_TOKEN_BYTES {
         return Err(format!(
-            "Remote Agency bearer token exceeds the {MAX_BEARER_TOKEN_BYTES}-byte limit"
+            "Remote Team bearer token exceeds the {MAX_BEARER_TOKEN_BYTES}-byte limit"
         ));
     }
     if token.chars().any(char::is_whitespace) || token.chars().any(char::is_control) {
         return Err(
-            "Remote Agency bearer token must not contain whitespace or control characters"
+            "Remote Team bearer token must not contain whitespace or control characters"
                 .to_string(),
         );
     }
@@ -765,7 +765,7 @@ pub fn save_remote_agency_binding(
     binding.source_url = source.to_string();
     binding.agency_id = binding.agency_id.trim().to_string();
     if binding.agency_id.is_empty() || binding.agency_id.len() > 128 {
-        return Err("Remote Agency binding has an invalid agency id".to_string());
+        return Err("Remote Team binding has an invalid agency id".to_string());
     }
     binding.agent_ids.sort();
     binding.agent_ids.dedup();
@@ -781,14 +781,14 @@ pub fn save_remote_agency_binding(
             || proxy.record_url.is_empty()
             || proxy.record_url.len() > MAX_TEXT_BYTES
         {
-            return Err("Remote Agency binding has an invalid proxy mapping".to_string());
+            return Err("Remote Team binding has an invalid proxy mapping".to_string());
         }
         if proxy
             .record_cid
             .as_deref()
             .is_some_and(|value| value.is_empty() || value.len() > 256)
         {
-            return Err("Remote Agency binding has an invalid record CID".to_string());
+            return Err("Remote Team binding has an invalid record CID".to_string());
         }
         if proxy.record_verification.as_deref().is_some_and(|value| {
             !matches!(
@@ -796,19 +796,17 @@ pub fn save_remote_agency_binding(
                 "operator-reviewed-local" | "tls-only" | "domain-jwks" | "directory-sigstore"
             )
         }) {
-            return Err("Remote Agency binding has an invalid verification method".to_string());
+            return Err("Remote Team binding has an invalid verification method".to_string());
         }
         if proxy.context_extension_uri.as_deref().is_some_and(|value| {
             absolute_reference(Some(&Value::String(value.to_string()))).is_none()
         }) || proxy.scope_ref.as_deref().is_some_and(|value| {
             absolute_reference(Some(&Value::String(value.to_string()))).is_none()
         }) {
-            return Err("Remote Agency binding has an invalid context reference".to_string());
+            return Err("Remote Team binding has an invalid context reference".to_string());
         }
         if proxy.scope_ref.is_some() && proxy.context_extension_uri.is_none() {
-            return Err(
-                "Remote Agency binding has a scope without a context extension".to_string(),
-            );
+            return Err("Remote Team binding has a scope without a context extension".to_string());
         }
         validate_remote_agency_url(&proxy.record_url)?;
     }
