@@ -152,7 +152,6 @@ export function RemoteAgencyDialog({
         let directoryVerification:
           | "manifest-bound-cid"
           | "directory-name-verified"
-          | "directory-name-unverified"
           | null = null;
         let directoryCid: string | null = null;
         if (remote.directoryReference) {
@@ -173,12 +172,15 @@ export function RemoteAgencyDialog({
           });
           recordSourceOverride = resolved.recordPath;
           directoryCid = resolved.cid;
-          directoryVerification =
-            resolved.verificationMethod === "manifest-bound-cid"
-              ? "manifest-bound-cid"
-              : resolved.verificationMethod === "directory-name"
-                ? "directory-name-verified"
-                : "directory-name-unverified";
+          if (resolved.verificationMethod === "manifest-bound-cid") {
+            directoryVerification = "manifest-bound-cid";
+          } else if (resolved.verificationMethod === "directory-name") {
+            directoryVerification = "directory-name-verified";
+          } else {
+            throw new Error(
+              `${remote.name} returned an unsupported AGNTCY Directory verification result.`,
+            );
+          }
           if (resolved.a2aEndpoint) {
             if (a2aEndpoint && a2aEndpoint !== resolved.a2aEndpoint) {
               throw new Error(

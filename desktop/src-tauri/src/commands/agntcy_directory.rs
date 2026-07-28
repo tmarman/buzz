@@ -3,9 +3,9 @@
 //! This client uses a checked-in, wire-compatible subset of the released
 //! v1.6.1 protobuf contract. It resolves a CID
 //! with `StoreService/Pull`, or a name with `NamingService/Resolve`. A CID
-//! response is sufficient for a manifest-bound record. Name verification is
-//! optional provenance and never blocks a successful Resolve+Pull. Directory
-//! discovery is not an identity or MAS-membership claim.
+//! response is sufficient for a manifest-bound record. A name response must
+//! also pass the Directory verification service before Buzz accepts it.
+//! Directory discovery is not an identity or MAS-membership claim.
 
 use std::{
     io::Write,
@@ -86,7 +86,7 @@ pub struct AgntcyRecordResolution {
 
 #[derive(Debug, Clone)]
 struct ResolvedRecord {
-    data: Value,
+    record_bytes: Vec<u8>,
     cid: String,
     verification: DirectoryVerification,
     a2a_endpoint: Option<String>,
@@ -96,7 +96,6 @@ struct ResolvedRecord {
 enum DirectoryVerification {
     CidBound,
     NameVerified { method: String },
-    Unverified { reason: String },
 }
 
 fn validate_lookup(input: &AgntcyDirectoryLookup) -> Result<Url, String> {
@@ -151,7 +150,11 @@ async fn directory_channel(endpoint: &Url) -> Result<Channel, String> {
         .timeout(DIRECTORY_TIMEOUT);
     if scheme == "https" {
         builder = builder
-            .tls_config(ClientTlsConfig::new().domain_name(host.to_string()))
+            .tls_config(
+                ClientTlsConfig::new()
+                    .with_native_roots()
+                    .domain_name(host.to_string()),
+            )
             .map_err(|error| format!("invalid AGNTCY Directory TLS configuration: {error}"))?;
     }
     let origin = endpoint
@@ -247,12 +250,14 @@ async fn verify_record(
         .await
         .map_err(|error: Status| format!("AGNTCY Directory verification failed: {error}"))?
         .into_inner();
+    verified_name(response)
+}
+
+fn verified_name(response: GetVerificationInfoResponse) -> Result<DirectoryVerification, String> {
     if !response.verified {
-        return Ok(DirectoryVerification::Unverified {
-            reason: response
-                .error_message
-                .unwrap_or_else(|| "Directory did not verify record name ownership".to_string()),
-        });
+        return Err(response
+            .error_message
+            .unwrap_or_else(|| "Directory did not verify record name ownership".to_string()));
     }
     Ok(DirectoryVerification::NameVerified {
         method: "directory-name".to_string(),
@@ -284,43 +289,168 @@ fn struct_value(value: Struct) -> Value {
     )
 }
 
-fn canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), String> {
-    match value {
-        Value::Null => output.extend_from_slice(b"null"),
-        Value::Bool(value) => output.extend_from_slice(if *value { b"true" } else { b"false" }),
-        Value::Number(value) => output.extend_from_slice(value.to_string().as_bytes()),
-        Value::String(value) => output.extend_from_slice(
-            &serde_json::to_vec(value).map_err(|error| format!("invalid JSON string: {error}"))?,
-        ),
-        Value::Array(values) => {
-            output.push(b'[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    output.push(b',');
-                }
-                canonical_json(value, output)?;
+// AGNTCY Directory v1.6.1 calculates Record CIDs from Record.Marshal output.
+// That method normalizes protobuf Struct data through Go encoding/json. These
+// writers reproduce its HTML escaping and ES6-style number notation; RFC 8785
+// or serde_json bytes are not compatible with the Directory CID contract.
+fn write_go_json_string(value: &str, output: &mut Vec<u8>) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    output.push(b'"');
+    for character in value.chars() {
+        match character {
+            '"' => output.extend_from_slice(br#"\""#),
+            '\\' => output.extend_from_slice(br#"\\"#),
+            '\u{0008}' => output.extend_from_slice(br#"\b"#),
+            '\u{000c}' => output.extend_from_slice(br#"\f"#),
+            '\n' => output.extend_from_slice(br#"\n"#),
+            '\r' => output.extend_from_slice(br#"\r"#),
+            '\t' => output.extend_from_slice(br#"\t"#),
+            '<' => output.extend_from_slice(br#"\u003c"#),
+            '>' => output.extend_from_slice(br#"\u003e"#),
+            '&' => output.extend_from_slice(br#"\u0026"#),
+            '\u{2028}' => output.extend_from_slice(br#"\u2028"#),
+            '\u{2029}' => output.extend_from_slice(br#"\u2029"#),
+            character if character <= '\u{001f}' => {
+                let byte = character as u8;
+                output.extend_from_slice(br#"\u00"#);
+                output.push(HEX[(byte >> 4) as usize]);
+                output.push(HEX[(byte & 0x0f) as usize]);
             }
-            output.push(b']');
+            character => {
+                let mut buffer = [0; 4];
+                output.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+            }
         }
-        Value::Object(values) => {
-            output.push(b'{');
-            let mut keys = values.keys().collect::<Vec<_>>();
-            keys.sort();
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    output.push(b',');
-                }
-                output.extend_from_slice(
-                    &serde_json::to_vec(key)
-                        .map_err(|error| format!("invalid JSON object key: {error}"))?,
-                );
-                output.push(b':');
-                canonical_json(values.get(key).expect("object key exists"), output)?;
-            }
-            output.push(b'}');
+    }
+    output.push(b'"');
+}
+
+fn write_go_json_number(value: f64, output: &mut Vec<u8>) -> Result<(), String> {
+    if !value.is_finite() {
+        return Err("AGNTCY Directory record contains a non-finite number".to_string());
+    }
+    if value == 0.0 {
+        if value.is_sign_negative() {
+            output.push(b'-');
+        }
+        output.push(b'0');
+        return Ok(());
+    }
+
+    let rendered = serde_json::Number::from_f64(value)
+        .ok_or_else(|| "AGNTCY Directory record contains an invalid number".to_string())?
+        .to_string();
+    let unsigned = rendered
+        .strip_prefix('-')
+        .or_else(|| rendered.strip_prefix('+'))
+        .unwrap_or(&rendered);
+    let (mantissa, explicit_exponent) = unsigned
+        .split_once(['e', 'E'])
+        .map(|(mantissa, exponent)| {
+            exponent
+                .parse::<i32>()
+                .map(|exponent| (mantissa, exponent))
+                .map_err(|_| "AGNTCY Directory number has an invalid exponent".to_string())
+        })
+        .transpose()?
+        .unwrap_or((unsigned, 0));
+    let fractional_digits = mantissa
+        .split_once('.')
+        .map_or(0, |(_, fractional)| fractional.len()) as i32;
+    let mut digits = mantissa
+        .bytes()
+        .filter(|byte| *byte != b'.')
+        .collect::<Vec<_>>();
+    while digits.len() > 1 && digits.first() == Some(&b'0') {
+        digits.remove(0);
+    }
+    let mut power = explicit_exponent - fractional_digits;
+    while digits.len() > 1 && digits.last() == Some(&b'0') {
+        digits.pop();
+        power += 1;
+    }
+    let scientific_exponent = power + digits.len() as i32 - 1;
+
+    if value.is_sign_negative() {
+        output.push(b'-');
+    }
+    if !(-6..21).contains(&scientific_exponent) {
+        output.push(digits[0]);
+        if digits.len() > 1 {
+            output.push(b'.');
+            output.extend_from_slice(&digits[1..]);
+        }
+        output.push(b'e');
+        if scientific_exponent >= 0 {
+            output.push(b'+');
+        }
+        output.extend_from_slice(scientific_exponent.to_string().as_bytes());
+    } else if scientific_exponent < 0 {
+        output.extend_from_slice(b"0.");
+        output.extend(std::iter::repeat_n(
+            b'0',
+            (-scientific_exponent - 1) as usize,
+        ));
+        output.extend_from_slice(&digits);
+    } else {
+        let integer_digits = scientific_exponent as usize + 1;
+        if integer_digits >= digits.len() {
+            output.extend_from_slice(&digits);
+            output.extend(std::iter::repeat_n(b'0', integer_digits - digits.len()));
+        } else {
+            output.extend_from_slice(&digits[..integer_digits]);
+            output.push(b'.');
+            output.extend_from_slice(&digits[integer_digits..]);
         }
     }
     Ok(())
+}
+
+fn write_agntcy_value(value: &ProtoValue, output: &mut Vec<u8>) -> Result<(), String> {
+    match value.kind.as_ref() {
+        Some(Kind::NullValue(_)) => output.extend_from_slice(b"null"),
+        Some(Kind::NumberValue(value)) => write_go_json_number(*value, output)?,
+        Some(Kind::StringValue(value)) => write_go_json_string(value, output),
+        Some(Kind::BoolValue(value)) => {
+            output.extend_from_slice(if *value { b"true" } else { b"false" });
+        }
+        Some(Kind::StructValue(value)) => write_agntcy_record(value, output)?,
+        Some(Kind::ListValue(value)) => {
+            output.push(b'[');
+            for (index, value) in value.values.iter().enumerate() {
+                if index > 0 {
+                    output.push(b',');
+                }
+                write_agntcy_value(value, output)?;
+            }
+            output.push(b']');
+        }
+        None => return Err("AGNTCY Directory record contains an unset value".to_string()),
+    }
+    Ok(())
+}
+
+fn write_agntcy_record(value: &Struct, output: &mut Vec<u8>) -> Result<(), String> {
+    output.push(b'{');
+    let mut keys = value.fields.keys().collect::<Vec<_>>();
+    keys.sort();
+    for (index, key) in keys.into_iter().enumerate() {
+        if index > 0 {
+            output.push(b',');
+        }
+        write_go_json_string(key, output);
+        output.push(b':');
+        write_agntcy_value(value.fields.get(key).expect("object key exists"), output)?;
+    }
+    output.push(b'}');
+    Ok(())
+}
+
+fn agntcy_record_bytes(value: &Struct) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    write_agntcy_record(value, &mut output)?;
+    Ok(output)
 }
 
 fn read_varint(bytes: &[u8], offset: &mut usize) -> Result<u64, String> {
@@ -392,10 +522,8 @@ fn encode_base32(bytes: &[u8]) -> String {
     output
 }
 
-fn cid_for_record(value: &Value) -> Result<String, String> {
-    let mut canonical = Vec::new();
-    canonical_json(value, &mut canonical)?;
-    let digest = Sha256::digest(canonical);
+fn cid_for_record(value: &Struct) -> Result<String, String> {
+    let digest = Sha256::digest(agntcy_record_bytes(value)?);
     let mut bytes = Vec::with_capacity(40);
     write_varint(1, &mut bytes); // CIDv1
     write_varint(1, &mut bytes); // AGNTCY record codec
@@ -405,7 +533,7 @@ fn cid_for_record(value: &Value) -> Result<String, String> {
     Ok(format!("b{}", encode_base32(&bytes)))
 }
 
-fn verify_record_cid(value: &Value, expected: &str) -> Result<(), String> {
+fn verify_record_cid(value: &Struct, expected: &str) -> Result<(), String> {
     let expected = expected.trim();
     if !expected.starts_with('b') {
         return Err("AGNTCY Directory returned an invalid CID multibase".to_string());
@@ -477,13 +605,6 @@ fn extract_a2a_endpoint(value: &Value) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-fn record_to_json(record: Record) -> Result<Value, String> {
-    let data = record
-        .data
-        .ok_or_else(|| "AGNTCY Directory record has no data".to_string())?;
-    Ok(struct_value(data))
-}
-
 async fn resolve_record(
     input: &AgntcyDirectoryLookup,
     endpoint: &Url,
@@ -515,29 +636,28 @@ async fn resolve_record(
             input.bearer_token.as_deref(),
         )
         .await?;
-        let verification = match verify_record(
+        let verification = verify_record(
             channel.clone(),
             resolved.cid.clone(),
             Some(resolved.name.clone()),
             Some(resolved.version.clone()),
             input.bearer_token.as_deref(),
         )
-        .await
-        {
-            Ok(value) => value,
-            Err(error) => DirectoryVerification::Unverified { reason: error },
-        };
+        .await?;
         (resolved.cid, record, verification)
     };
-    let data = record_to_json(record)?;
-    verify_record_cid(&data, &cid)?;
+    let record_data = record
+        .data
+        .ok_or_else(|| "AGNTCY Directory record has no data".to_string())?;
+    verify_record_cid(&record_data, &cid)?;
+    let record_bytes = agntcy_record_bytes(&record_data)?;
+    let data = struct_value(record_data);
     let a2a_endpoint = extract_a2a_endpoint(&data)?;
-    let encoded = serde_json::to_vec(&data).map_err(|error| error.to_string())?;
-    if encoded.len() > MAX_RECORD_BYTES {
+    if record_bytes.len() > MAX_RECORD_BYTES {
         return Err("AGNTCY Directory record exceeds the 4 MiB limit".to_string());
     }
     Ok(ResolvedRecord {
-        data,
+        record_bytes,
         cid,
         verification,
         a2a_endpoint,
@@ -582,10 +702,8 @@ pub async fn resolve_agntcy_agent_record(
 ) -> Result<AgntcyRecordResolution, String> {
     let endpoint = validate_lookup(&input)?;
     let resolved = resolve_record(&input, &endpoint).await?;
-    let bytes = serde_json::to_vec(&resolved.data)
-        .map_err(|error| format!("failed to encode AGNTCY Directory record: {error}"))?;
     let path = record_cache_path(app, &resolved.cid)?;
-    write_record_cache(&path, &bytes)?;
+    write_record_cache(&path, &resolved.record_bytes)?;
     match resolved.verification {
         DirectoryVerification::CidBound => Ok(AgntcyRecordResolution {
             record_path: path.to_string_lossy().to_string(),
@@ -601,14 +719,6 @@ pub async fn resolve_agntcy_agent_record(
             verification: "verified".to_string(),
             verification_method: Some(method),
             verification_detail: None,
-            a2a_endpoint: resolved.a2a_endpoint,
-        }),
-        DirectoryVerification::Unverified { reason } => Ok(AgntcyRecordResolution {
-            record_path: path.to_string_lossy().to_string(),
-            cid: resolved.cid,
-            verification: "unverified".to_string(),
-            verification_method: Some("directory-name-unverified".to_string()),
-            verification_detail: Some(reason),
             a2a_endpoint: resolved.a2a_endpoint,
         }),
     }
@@ -710,22 +820,115 @@ mod tests {
     }
 
     #[test]
-    fn verifies_canonical_record_cid_and_rejects_changed_bytes() {
-        let record = serde_json::json!({
-            "name": "Scout",
-            "skills": ["research"],
-            "nested": {"z": 2, "a": 1}
-        });
+    fn matches_agntcy_v1_6_1_record_marshal_and_rejects_changed_bytes() {
+        let mut artifact = BTreeMap::new();
+        artifact.insert(
+            "size".to_string(),
+            ProtoValue {
+                kind: Some(Kind::NumberValue(1234.0)),
+            },
+        );
+        let numbers = vec![0.000001, 0.0000001, 1e20, 1e21, 0.0]
+            .into_iter()
+            .map(|value| ProtoValue {
+                kind: Some(Kind::NumberValue(value)),
+            })
+            .collect();
+        let mut module = BTreeMap::new();
+        module.insert(
+            "artifact".to_string(),
+            ProtoValue {
+                kind: Some(Kind::StructValue(Struct { fields: artifact })),
+            },
+        );
+        module.insert(
+            "numbers".to_string(),
+            ProtoValue {
+                kind: Some(Kind::ListValue(ListValue { values: numbers })),
+            },
+        );
+        let mut skill = BTreeMap::new();
+        skill.insert(
+            "id".to_string(),
+            ProtoValue {
+                kind: Some(Kind::NumberValue(10101.0)),
+            },
+        );
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "created_at".to_string(),
+            ProtoValue {
+                kind: Some(Kind::StringValue("2026-07-27T00:00:00Z".to_string())),
+            },
+        );
+        fields.insert(
+            "docs".to_string(),
+            ProtoValue {
+                kind: Some(Kind::StringValue(
+                    "https://example.com/a?x=1&y=2<z>".to_string(),
+                )),
+            },
+        );
+        fields.insert(
+            "modules".to_string(),
+            ProtoValue {
+                kind: Some(Kind::ListValue(ListValue {
+                    values: vec![ProtoValue {
+                        kind: Some(Kind::StructValue(Struct { fields: module })),
+                    }],
+                })),
+            },
+        );
+        fields.insert(
+            "skills".to_string(),
+            ProtoValue {
+                kind: Some(Kind::ListValue(ListValue {
+                    values: vec![ProtoValue {
+                        kind: Some(Kind::StructValue(Struct { fields: skill })),
+                    }],
+                })),
+            },
+        );
+        let record = Struct { fields };
+        assert_eq!(
+            agntcy_record_bytes(&record).expect("record serializes"),
+            br#"{"created_at":"2026-07-27T00:00:00Z","docs":"https://example.com/a?x=1\u0026y=2\u003cz\u003e","modules":[{"artifact":{"size":1234},"numbers":[0.000001,1e-7,100000000000000000000,1e+21,0]}],"skills":[{"id":10101}]}"#
+        );
         let cid = cid_for_record(&record).expect("CID computes");
-        assert!(cid.starts_with("baeare"), "unexpected AGNTCY CID: {cid}");
-        verify_record_cid(&record, &cid).expect("CID matches canonical record");
-        let changed = serde_json::json!({
-            "name": "Scout",
-            "skills": ["research", "changed"],
-            "nested": {"z": 2, "a": 1}
-        });
+        assert_eq!(
+            cid,
+            "baeareic2fvoksjgtkfhh5y66qsde3jb4kxpeiobk3nw6u3nfkgksc7aphu"
+        );
+        verify_record_cid(&record, &cid).expect("CID matches AGNTCY reference bytes");
+        let mut changed = record.clone();
+        changed.fields.insert(
+            "changed".to_string(),
+            ProtoValue {
+                kind: Some(Kind::BoolValue(true)),
+            },
+        );
         assert!(verify_record_cid(&changed, &cid).is_err());
         assert!(verify_record_cid(&record, "bafkrei-invalid").is_err());
+    }
+
+    #[test]
+    fn rejects_unverified_directory_names() {
+        assert!(verified_name(GetVerificationInfoResponse {
+            verified: false,
+            error_message: Some("name proof failed".to_string()),
+            ..Default::default()
+        })
+        .is_err());
+        assert_eq!(
+            verified_name(GetVerificationInfoResponse {
+                verified: true,
+                ..Default::default()
+            })
+            .expect("verified name is accepted"),
+            DirectoryVerification::NameVerified {
+                method: "directory-name".to_string()
+            }
+        );
     }
 
     #[test]

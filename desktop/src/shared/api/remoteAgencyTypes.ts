@@ -68,6 +68,5 @@ export type RemoteAgencyProxy = {
     | "directory-sigstore"
     | "manifest-bound-cid"
     | "directory-name-verified"
-    | "directory-name-unverified"
     | null;
 };
