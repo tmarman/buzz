@@ -1872,6 +1872,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_oasf_descriptor_media_type_is_rejected() {
+        let artifact = json!({ "name": "missing media type" });
+        let artifact_bytes = serde_json::to_vec(&artifact).expect("artifact serializes");
+        let descriptor: Descriptor = serde_json::from_value(json!({
+            "json": artifact,
+            "digest": format!("sha256:{}", hex::encode(Sha256::digest(&artifact_bytes))),
+            "size": artifact_bytes.len()
+        }))
+        .expect("descriptor");
+        let err = descriptor_bytes(&descriptor, None)
+            .await
+            .expect_err("missing media_type");
+        assert!(err.to_string().contains("requires media_type"));
+    }
+
+    #[tokio::test]
     async fn acp_transcript_handles_initialize_new_and_prompt() {
         let mut sessions = HashSet::new();
         let initialize = handle_acp_message(
