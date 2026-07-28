@@ -996,10 +996,7 @@ pub async fn update_managed_agent(
                 &record.relay_url,
                 &relay_ws_url_with_override(&state),
             );
-            let display_name = record
-                .display_name
-                .clone()
-                .unwrap_or_else(|| record.name.clone());
+            let display_name = record.name.clone();
             // Avatar fallback derives from the EFFECTIVE harness (persona-wins),
             // not the frozen snapshot, so an inherited harness picks the right
             // default avatar.
