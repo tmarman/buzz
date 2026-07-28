@@ -7,6 +7,9 @@ export type RemoteAgencyAgent = {
   a2aEndpoint: string | null;
   agentCardUrl: string | null;
   capabilities: string[];
+  directoryEndpoint?: string | null;
+  directoryReference?: string | null;
+  directoryReferenceKind?: "cid" | "name" | null;
 };
 
 export type RemoteAgencySurface = {
@@ -32,6 +35,12 @@ export type RemoteAgencyDescriptor = {
   spaces: RemoteAgencySpace[];
   protocols: string[];
   capabilities: string[];
+  sourceKind?: "agntcy-directory" | string | null;
+  directoryEndpoint?: string | null;
+  directoryReference?: string | null;
+  recordCid?: string | null;
+  recordVerification?: "verified" | "unverified" | string | null;
+  recordVerificationMethod?: string | null;
 };
 
 export type RemoteAgencyBinding = {
@@ -57,5 +66,7 @@ export type RemoteAgencyProxy = {
     | "tls-only"
     | "domain-jwks"
     | "directory-sigstore"
+    | "manifest-bound-cid"
+    | "directory-name-verified"
     | null;
 };

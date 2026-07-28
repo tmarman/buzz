@@ -42,6 +42,19 @@ function equivalentLoopbackAgencySource(left: string, right: string): boolean {
   }
 }
 
+function isCredentialRecordSource(value: string | null): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "https:") return true;
+    return (
+      url.protocol === "http:" && normalizedLoopbackHost(url.hostname) !== null
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function findRemoteAgencyBinding(
   bindings: RemoteAgencyBinding[],
   descriptor: RemoteAgencyDescriptor,
@@ -70,8 +83,10 @@ export function buildRemoteAgencyManagedAgentInput(
   agent: RemoteAgencyAgent,
   channelId: string,
   spaceId: string | null,
+  recordUrlOverride?: string,
 ): CreateManagedAgentInput {
-  if (!agent.recordUrl) {
+  const recordSource = recordUrlOverride ?? agent.recordUrl;
+  if (!recordSource) {
     throw new Error(
       "Remote Agent does not advertise a public OASF Agent Record",
     );
@@ -86,7 +101,10 @@ export function buildRemoteAgencyManagedAgentInput(
     harnessOverride: true,
     agentArgs: [],
     envVars: {
-      BUZZ_A2A_AGENT_RECORD: agent.recordUrl,
+      BUZZ_A2A_AGENT_RECORD: recordSource,
+      ...(recordUrlOverride && isCredentialRecordSource(agent.recordUrl)
+        ? { BUZZ_A2A_CREDENTIAL_RECORD: agent.recordUrl }
+        : {}),
       BUZZ_A2A_BEARER_ENDPOINT: agent.a2aEndpoint,
       BUZZ_A2A_AGENCY_REF: descriptor.agencyId,
       BUZZ_A2A_AGENT_REF: agent.id,

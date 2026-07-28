@@ -878,6 +878,22 @@ export async function previewRemoteAgency(
   });
 }
 
+export async function resolveRemoteAgencyRecord(input: {
+  endpoint: string;
+  reference: string;
+  referenceKind: "cid" | "name";
+  bearerToken?: string;
+}): Promise<{
+  recordPath: string;
+  cid: string;
+  verification: "verified" | "unverified" | "cid-bound";
+  verificationMethod: string | null;
+  verificationDetail: string | null;
+  a2aEndpoint: string | null;
+}> {
+  return invokeTauri("resolve_remote_agency_record", { input });
+}
+
 export async function listRemoteAgencies(): Promise<RemoteAgencyBinding[]> {
   return invokeTauri<RemoteAgencyBinding[]>("list_remote_agencies");
 }

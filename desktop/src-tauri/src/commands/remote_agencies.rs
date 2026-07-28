@@ -171,6 +171,12 @@ pub struct RemoteAgencyAgent {
     pub a2a_endpoint: Option<String>,
     pub agent_card_url: Option<String>,
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub directory_endpoint: Option<String>,
+    #[serde(default)]
+    pub directory_reference: Option<String>,
+    #[serde(default)]
+    pub directory_reference_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -202,6 +208,18 @@ pub struct RemoteAgencyDescriptor {
     pub spaces: Vec<RemoteAgencySpace>,
     pub protocols: Vec<String>,
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub directory_endpoint: Option<String>,
+    #[serde(default)]
+    pub directory_reference: Option<String>,
+    #[serde(default)]
+    pub record_cid: Option<String>,
+    #[serde(default)]
+    pub record_verification: Option<String>,
+    #[serde(default)]
+    pub record_verification_method: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -435,6 +453,36 @@ fn parse_agent(source: &Url, value: &Value) -> Option<RemoteAgencyAgent> {
                 .or_else(|| value.get("supportedInterfaces")),
         )
     });
+    let directory = value
+        .get("agntcy_directory")
+        .or_else(|| value.get("agntcyDirectory"))
+        .or_else(|| value.get("directory"));
+    let directory_cid =
+        text(value.get("record_cid").or_else(|| value.get("recordCid"))).or_else(|| {
+            directory.and_then(|value| {
+                value
+                    .get("cid")
+                    .or_else(|| value.get("record_cid"))
+                    .and_then(|value| text(Some(value)))
+            })
+        });
+    let directory_name = text(
+        value
+            .get("record_reference")
+            .or_else(|| value.get("recordReference")),
+    )
+    .or_else(|| {
+        directory.and_then(|value| {
+            value
+                .get("reference")
+                .or_else(|| value.get("name"))
+                .and_then(|value| text(Some(value)))
+        })
+    });
+    let (directory_reference, directory_reference_kind) = directory_cid
+        .map(|value| (Some(value), Some("cid".to_string())))
+        .or_else(|| directory_name.map(|value| (Some(value), Some("name".to_string()))))
+        .unwrap_or((None, None));
     Some(RemoteAgencyAgent {
         id: agent_id,
         name,
@@ -448,6 +496,14 @@ fn parse_agent(source: &Url, value: &Value) -> Option<RemoteAgencyAgent> {
         a2a_endpoint,
         agent_card_url: card,
         capabilities: strings(value.get("capabilities").or_else(|| value.get("skills"))),
+        directory_endpoint: directory.and_then(|value| {
+            value
+                .get("endpoint")
+                .or_else(|| value.get("directory_endpoint"))
+                .and_then(|value| text(Some(value)))
+        }),
+        directory_reference,
+        directory_reference_kind,
     })
 }
 
@@ -585,6 +641,12 @@ pub fn parse_remote_agency_document(
         spaces,
         protocols,
         capabilities,
+        source_kind: None,
+        directory_endpoint: None,
+        directory_reference: None,
+        record_cid: None,
+        record_verification: None,
+        record_verification_method: None,
     })
 }
 
@@ -609,7 +671,7 @@ fn load_bindings(app: &AppHandle) -> Result<Vec<RemoteAgencyBinding>, String> {
         .map_err(|error| format!("failed to parse remote agencies: {error}"))
 }
 
-async fn public_addresses(source: &Url) -> Result<Vec<std::net::SocketAddr>, String> {
+pub(crate) async fn public_addresses(source: &Url) -> Result<Vec<std::net::SocketAddr>, String> {
     let host = source
         .host_str()
         .ok_or_else(|| "Remote Agency URL must include a host".to_string())?;
@@ -775,7 +837,13 @@ pub fn save_remote_agency_binding(
         if proxy.record_verification.as_deref().is_some_and(|value| {
             !matches!(
                 value,
-                "operator-reviewed-local" | "tls-only" | "domain-jwks" | "directory-sigstore"
+                "operator-reviewed-local"
+                    | "tls-only"
+                    | "domain-jwks"
+                    | "directory-sigstore"
+                    | "manifest-bound-cid"
+                    | "directory-name-verified"
+                    | "directory-name-unverified"
             )
         }) {
             return Err("Remote Agency binding has an invalid verification method".to_string());

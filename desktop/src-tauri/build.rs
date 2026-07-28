@@ -5,6 +5,29 @@ include!("src/commands/reconnect_hook_config.rs");
 use base64::Engine as _;
 
 fn main() {
+    // Wire-compatible subset of the AGNTCY Directory v1.6.1 protobuf schema.
+    // The source files are vendored under proto/agntcy and the generated
+    // client is produced at build time; no Directory CLI or REST shim is used.
+    let proto_root = std::path::Path::new("proto");
+    std::env::set_var(
+        "PROTOC",
+        protoc_bin_vendored::protoc_bin_path()
+            .expect("protoc binary")
+            .to_string_lossy()
+            .as_ref(),
+    );
+    tonic_prost_build::configure()
+        .build_client(true)
+        .build_server(false)
+        .compile_protos(
+            &[
+                proto_root.join("agntcy/dir/core/v1/record.proto"),
+                proto_root.join("agntcy/dir/naming/v1/naming_service.proto"),
+                proto_root.join("agntcy/dir/store/v1/store_service.proto"),
+            ],
+            &[proto_root.to_path_buf()],
+        )
+        .expect("failed to generate pinned AGNTCY Directory client");
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_URL");
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_HTTP");
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");

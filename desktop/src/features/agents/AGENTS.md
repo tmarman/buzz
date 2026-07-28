@@ -24,6 +24,16 @@ X" flag): add it to `KnownAcpRuntime` first, expose it on
 `AcpRuntimeCatalogEntry`, then project it through the core. Do not shortcut
 with a TypeScript lookup table or an id comparison in a component.
 
+## Remote Agency Directory contract
+
+Remote Agency manifests may project an AGNTCY Directory reference for each
+agent. The reference is typed as `cid` or `name`; the client must not infer the
+type from the string. The operator selects the Directory endpoint. The
+manifest cannot select an attestation service. Buzz caches the resolved OASF
+bytes as content-addressed data. The cache is not an identity or trust record.
+A2A credentials remain keyed to the original reviewed remote-record or
+manifest URL. A Directory cache path must not replace that credential key.
+
 ## Rules
 
 1. **No hardcoded harness-ID checks in render code.** `runtime.id === "claude"`

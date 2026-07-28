@@ -84,6 +84,58 @@ test("refuses a participant without a reviewed record or endpoint", () => {
   );
 });
 
+test("binds a Directory-backed record to the original A2A credential identity", () => {
+  const cachedRecordPath = "/tmp/remote-agency-records/record.json";
+  const input = buildRemoteAgencyManagedAgentInput(
+    descriptor,
+    {
+      id: "agent-1",
+      name: "Scout",
+      description: null,
+      recordUrl: "https://example.com/agents/scout.json",
+      directoryReference: "bafybeigdyrzt4example",
+      recordRevision: "r1",
+      a2aEndpoint: "https://example.com/a2a/scout",
+      agentCardUrl: "https://example.com/a2a/card.json",
+      capabilities: ["research"],
+    },
+    "channel-1",
+    "space-1",
+    cachedRecordPath,
+  );
+  assert.equal(input.envVars.BUZZ_A2A_AGENT_RECORD, cachedRecordPath);
+  assert.equal(
+    input.envVars.BUZZ_A2A_CREDENTIAL_RECORD,
+    "https://example.com/agents/scout.json",
+  );
+});
+
+test("allows a Directory-only agent without inventing an A2A credential source", () => {
+  const input = buildRemoteAgencyManagedAgentInput(
+    descriptor,
+    {
+      id: "agent-1",
+      name: "Scout",
+      description: null,
+      recordUrl: null,
+      directoryReference: "baearei4example",
+      directoryReferenceKind: "cid",
+      recordRevision: null,
+      a2aEndpoint: "https://example.com/a2a/scout",
+      agentCardUrl: null,
+      capabilities: [],
+    },
+    "channel-1",
+    null,
+    "/tmp/remote-agency-records/record.json",
+  );
+  assert.equal(
+    input.envVars.BUZZ_A2A_AGENT_RECORD,
+    "/tmp/remote-agency-records/record.json",
+  );
+  assert.equal(input.envVars.BUZZ_A2A_CREDENTIAL_RECORD, undefined);
+});
+
 test("reuses a persisted proxy after a partial join failure", () => {
   const proxy = {
     agentId: "agent-1",
