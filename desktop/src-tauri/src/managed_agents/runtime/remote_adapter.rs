@@ -9,7 +9,10 @@ pub(super) fn load_bearer_token(
         return Ok(None);
     }
     match (
-        descriptor.env.get("BUZZ_A2A_AGENT_RECORD"),
+        descriptor
+            .env
+            .get("BUZZ_A2A_CREDENTIAL_RECORD")
+            .or_else(|| descriptor.env.get("BUZZ_A2A_AGENT_RECORD")),
         descriptor.env.get("BUZZ_A2A_BEARER_ENDPOINT"),
     ) {
         (Some(record_url), Some(endpoint)) => {

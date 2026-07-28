@@ -722,6 +722,7 @@ pub fn run() {
             save_custom_harness,
             delete_custom_harness,
             preview_remote_agency,
+            resolve_remote_agency_record,
             list_remote_agencies,
             store_remote_agency_bearer_token,
             save_remote_agency_binding,

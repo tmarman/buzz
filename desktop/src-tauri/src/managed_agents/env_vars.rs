@@ -64,6 +64,7 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     "BUZZ_ACP_PRIVATE_KEY",
     "BUZZ_ACP_API_TOKEN",
     "BUZZ_A2A_BEARER_TOKEN",
+    "BUZZ_A2A_CREDENTIAL_RECORD",
     // Relay URL: overriding would let a malicious config redirect the
     // agent to an attacker-controlled relay.
     "BUZZ_RELAY_URL",

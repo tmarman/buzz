@@ -13,6 +13,7 @@ import {
   addChannelMembers,
   listRemoteAgencies,
   previewRemoteAgency,
+  resolveRemoteAgencyRecord,
   saveRemoteAgencyBinding,
   storeRemoteAgencyBearerToken,
   updateManagedAgent,
@@ -56,6 +57,7 @@ export function RemoteAgencyDialog({
   const channelsQuery = useChannelsQuery({ enabled: open });
   const createMutation = useCreateManagedAgentMutation();
   const [sourceUrl, setSourceUrl] = React.useState("");
+  const [directoryEndpoint, setDirectoryEndpoint] = React.useState("");
   const [descriptor, setDescriptor] =
     React.useState<RemoteAgencyDescriptor | null>(null);
   const [selectedAgentIds, setSelectedAgentIds] = React.useState<string[]>([]);
@@ -82,6 +84,7 @@ export function RemoteAgencyDialog({
 
   function reset() {
     setSourceUrl("");
+    setDirectoryEndpoint("");
     setDescriptor(null);
     setSelectedAgentIds([]);
     setSelectedSpaceIds([]);
@@ -107,7 +110,9 @@ export function RemoteAgencyDialog({
       const next = await previewRemoteAgency(sourceUrl.trim());
       setDescriptor(next);
       const joinableAgent = next.agents.find(
-        (agent) => agent.recordUrl && agent.a2aEndpoint,
+        (agent) =>
+          (agent.recordUrl || agent.directoryReference) &&
+          (agent.a2aEndpoint || agent.directoryReference),
       );
       setSelectedAgentIds(joinableAgent ? [joinableAgent.id] : []);
       setSelectedSpaceIds(next.spaces.length > 0 ? [next.spaces[0].id] : []);
@@ -135,16 +140,69 @@ export function RemoteAgencyDialog({
       for (const agentId of selectedAgentIds) {
         const remote = descriptor.agents.find((agent) => agent.id === agentId);
         if (!remote) continue;
-        if (!remote.recordUrl || !remote.a2aEndpoint) {
+        if (!remote.recordUrl && !remote.directoryReference) {
           throw new Error(
-            `${remote.name} no longer advertises a public OASF Agent Record and reviewed A2A endpoint`,
+            `${remote.name} no longer advertises a public OASF Agent Record or AGNTCY Directory reference`,
           );
         }
         const selectedSpaceId = selectedSpaceIds[0];
+        let recordSourceOverride: string | undefined;
+        let a2aEndpoint = remote.a2aEndpoint;
+        const persistedRecordUrl = remote.recordUrl ?? descriptor.sourceUrl;
+        let directoryVerification:
+          | "manifest-bound-cid"
+          | "directory-name-verified"
+          | "directory-name-unverified"
+          | null = null;
+        let directoryCid: string | null = null;
+        if (remote.directoryReference) {
+          if (!remote.directoryReferenceKind) {
+            throw new Error(
+              `${remote.name} has an untyped AGNTCY Directory reference; refresh its Agency manifest before joining.`,
+            );
+          }
+          if (!directoryEndpoint.trim()) {
+            throw new Error(
+              "Enter the AGNTCY Directory endpoint selected for this Agency before joining its Directory-backed agents.",
+            );
+          }
+          const resolved = await resolveRemoteAgencyRecord({
+            endpoint: directoryEndpoint.trim(),
+            reference: remote.directoryReference,
+            referenceKind: remote.directoryReferenceKind,
+          });
+          recordSourceOverride = resolved.recordPath;
+          directoryCid = resolved.cid;
+          directoryVerification =
+            resolved.verificationMethod === "manifest-bound-cid"
+              ? "manifest-bound-cid"
+              : resolved.verificationMethod === "directory-name"
+                ? "directory-name-verified"
+                : "directory-name-unverified";
+          if (resolved.a2aEndpoint) {
+            if (a2aEndpoint && a2aEndpoint !== resolved.a2aEndpoint) {
+              throw new Error(
+                `${remote.name} advertises different A2A endpoints in its Agency manifest and OASF record.`,
+              );
+            }
+            a2aEndpoint = resolved.a2aEndpoint;
+          }
+        }
+        if (!a2aEndpoint) {
+          throw new Error(
+            `${remote.name} has no A2A endpoint in its Agency manifest or OASF Agent Record.`,
+          );
+        }
+        const resolvedRemote = { ...remote, a2aEndpoint };
         if (bearerToken) {
+          if (!remote.recordUrl) {
+            throw new Error(
+              `${remote.name} has no reviewed record URL for the A2A credential key. Clear the A2A token or use an Agency record URL.`,
+            );
+          }
           await storeRemoteAgencyBearerToken({
             recordUrl: remote.recordUrl,
-            endpoint: remote.a2aEndpoint,
+            endpoint: a2aEndpoint,
             token: bearerToken,
           });
         }
@@ -159,9 +217,10 @@ export function RemoteAgencyDialog({
           try {
             const desired = buildRemoteAgencyManagedAgentInput(
               descriptor,
-              remote,
+              resolvedRemote,
               channelId,
               selectedSpaceId ?? null,
+              recordSourceOverride,
             );
             await stopManagedAgent(existingProxy.pubkey);
             await updateManagedAgent({
@@ -177,12 +236,14 @@ export function RemoteAgencyDialog({
             const existingProxyIndex = proxies.indexOf(existingProxy);
             proxies[existingProxyIndex] = {
               ...existingProxy,
-              recordUrl: remote.recordUrl,
+              recordUrl: persistedRecordUrl,
               recordRevision: remote.recordRevision,
-              recordCid: null,
-              recordVerification: remote.recordUrl.startsWith("https:")
-                ? "tls-only"
-                : "operator-reviewed-local",
+              recordCid: directoryCid,
+              recordVerification:
+                directoryVerification ??
+                (persistedRecordUrl.startsWith("https:")
+                  ? "tls-only"
+                  : "operator-reviewed-local"),
             };
             await saveRemoteAgencyBinding(
               bindingFromRemoteAgencyProxies(
@@ -204,9 +265,10 @@ export function RemoteAgencyDialog({
         const created = await createMutation.mutateAsync(
           buildRemoteAgencyManagedAgentInput(
             descriptor,
-            remote,
+            resolvedRemote,
             channelId,
             selectedSpaceId ?? null,
+            recordSourceOverride,
           ),
         );
         proxies.push({
@@ -214,12 +276,14 @@ export function RemoteAgencyDialog({
           pubkey: created.agent.pubkey,
           channelId,
           spaceId: selectedSpaceId ?? null,
-          recordUrl: remote.recordUrl,
+          recordUrl: persistedRecordUrl,
           recordRevision: remote.recordRevision,
-          recordCid: null,
-          recordVerification: remote.recordUrl.startsWith("https:")
-            ? "tls-only"
-            : "operator-reviewed-local",
+          recordCid: directoryCid,
+          recordVerification:
+            directoryVerification ??
+            (persistedRecordUrl.startsWith("https:")
+              ? "tls-only"
+              : "operator-reviewed-local"),
         });
         await saveRemoteAgencyBinding(
           bindingFromRemoteAgencyProxies(
@@ -389,7 +453,10 @@ export function RemoteAgencyDialog({
                   <Checkbox
                     aria-label={`Join ${agent.name}`}
                     checked={selectedAgentIds.includes(agent.id)}
-                    disabled={!agent.recordUrl || !agent.a2aEndpoint}
+                    disabled={
+                      (!agent.recordUrl && !agent.directoryReference) ||
+                      (!agent.a2aEndpoint && !agent.directoryReference)
+                    }
                     onCheckedChange={(checked) =>
                       setSelectedAgentIds((current) =>
                         checked
@@ -430,7 +497,15 @@ export function RemoteAgencyDialog({
                         A2A endpoint configured: {agent.a2aEndpoint}
                       </span>
                     ) : null}
-                    {!agent.recordUrl || !agent.a2aEndpoint ? (
+                    {agent.directoryReference ? (
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        AGNTCY Directory{" "}
+                        {agent.directoryReferenceKind ?? "name"}:{" "}
+                        {agent.directoryReference}
+                      </span>
+                    ) : null}
+                    {(!agent.recordUrl && !agent.directoryReference) ||
+                    (!agent.a2aEndpoint && !agent.directoryReference) ? (
                       <span className="mt-1 block text-xs text-muted-foreground">
                         Missing public OASF Agent Record or A2A endpoint; this
                         agent is preview-only.
@@ -440,6 +515,32 @@ export function RemoteAgencyDialog({
                 </div>
               ))}
             </section>
+
+            {descriptor.agents.some((agent) => agent.directoryReference) ? (
+              <section className="space-y-2 rounded-lg border border-border/50 bg-muted/10 p-3">
+                <label
+                  className="block space-y-2 text-sm font-medium"
+                  htmlFor="remote-agency-directory-endpoint"
+                >
+                  AGNTCY Directory endpoint
+                  <Input
+                    aria-label="AGNTCY Directory endpoint"
+                    id="remote-agency-directory-endpoint"
+                    onChange={(event) =>
+                      setDirectoryEndpoint(event.target.value)
+                    }
+                    placeholder="http://localhost:8888"
+                    type="url"
+                    value={directoryEndpoint}
+                  />
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  This endpoint is selected by you for the Agency. Agent records
+                  provide only CIDs or names; they cannot select their own
+                  attestation service.
+                </p>
+              </section>
+            ) : null}
 
             <section className="space-y-2">
               <h3 className="text-sm font-medium">Spaces and surfaces</h3>

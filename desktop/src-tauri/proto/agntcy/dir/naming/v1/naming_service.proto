@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+// Wire-compatible subset of AGNTCY Directory v1.6.1.
+// Source: https://github.com/agntcy/dir/tree/v1.6.1/proto/agntcy/dir/naming/v1
+syntax = "proto3";
+package agntcy.dir.naming.v1;
+
+import "agntcy/dir/core/v1/record.proto";
+
+service NamingService {
+  rpc GetVerificationInfo(GetVerificationInfoRequest) returns (GetVerificationInfoResponse);
+  rpc Resolve(ResolveRequest) returns (ResolveResponse);
+}
+message GetVerificationInfoRequest {
+  optional string cid = 1;
+  optional string name = 2;
+  optional string version = 3;
+}
+message GetVerificationInfoResponse {
+  bool verified = 1;
+  optional string error_message = 3;
+}
+message ResolveRequest {
+  string name = 1;
+  optional string version = 2;
+}
+message ResolveResponse {
+  repeated agntcy.dir.core.v1.NamedRecordRef records = 1;
+}

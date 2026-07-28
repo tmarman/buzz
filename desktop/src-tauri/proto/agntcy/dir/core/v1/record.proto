@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+// Source: https://github.com/agntcy/dir/tree/v1.6.1/proto/agntcy/dir/core/v1
+// This file keeps the wire-compatible record messages used by the read-only
+// Buzz resolver. Validation extensions are intentionally not needed by a
+// client and are omitted from the generated surface.
+syntax = "proto3";
+package agntcy.dir.core.v1;
+
+import "google/protobuf/struct.proto";
+
+message RecordRef { string cid = 1; }
+message NamedRecordRef {
+  string name = 1;
+  string version = 2;
+  string cid = 3;
+}
+message Record { google.protobuf.Struct data = 1; }

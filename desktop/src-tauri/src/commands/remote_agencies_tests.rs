@@ -182,6 +182,64 @@ fn parses_collection_projection_shape() {
 }
 
 #[test]
+fn keeps_manifest_spaces_separate_from_per_agent_directory_refs() {
+    let json = br#"{
+      "id":"voxelbox",
+      "agents":[
+        {"id":"smithy","name":"Smithy","directory":{"endpoint":"http://localhost:8888","cid":"bafy-smithy"}},
+        {"id":"scout","name":"Scout","directory":{"endpoint":"http://localhost:8888","name":"voxelbox/scout:v1"}}
+      ],
+      "spaces":[{"id":"maverick","name":"Maverick","surfaces":[{"id":"board","name":"Board"}]}]
+    }"#;
+    let descriptor = parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
+    assert_eq!(descriptor.agents.len(), 2);
+    assert_eq!(
+        descriptor.agents[0].directory_reference.as_deref(),
+        Some("bafy-smithy")
+    );
+    assert_eq!(
+        descriptor.agents[0].directory_reference_kind.as_deref(),
+        Some("cid")
+    );
+    assert_eq!(
+        descriptor.agents[1].directory_reference.as_deref(),
+        Some("voxelbox/scout:v1")
+    );
+    assert_eq!(
+        descriptor.agents[1].directory_reference_kind.as_deref(),
+        Some("name")
+    );
+    assert_eq!(descriptor.spaces.len(), 1);
+    assert_eq!(descriptor.spaces[0].id, "maverick");
+}
+
+#[test]
+fn parses_foundry_public_agent_directory_projection() {
+    let json = br#"{
+      "id":"voxelbox",
+      "agents":[{
+        "id":"smithy",
+        "name":"Smithy",
+        "record_cid":"baearei4example",
+        "record_reference":"voxelbox/smithy:v1",
+        "a2a_endpoint":"https://example.com/a2a/smithy"
+      }],
+      "spaces":[{"id":"maverick","name":"Maverick","surfaces":[]}]
+    }"#;
+    let descriptor = parse_remote_agency_document("https://example.com/agency.json", json)
+        .expect("Foundry projection parses");
+    assert_eq!(
+        descriptor.agents[0].directory_reference.as_deref(),
+        Some("baearei4example")
+    );
+    assert_eq!(
+        descriptor.agents[0].directory_reference_kind.as_deref(),
+        Some("cid")
+    );
+    assert_eq!(descriptor.spaces[0].id, "maverick");
+}
+
+#[test]
 fn selects_only_a_declared_jsonrpc_interface() {
     let json = br#"{
       "id":"agency.example",
