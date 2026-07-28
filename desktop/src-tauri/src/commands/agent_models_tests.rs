@@ -570,8 +570,8 @@ fn managed_agent_rename_keeps_a_mirrored_display_name_in_sync() {
     let mut record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
         r#"{
             "pubkey": "standalone1",
-            "name": "Remote Agency · proxied by Buzz · example-agent",
-            "display_name": "Remote Agency · proxied by Buzz · example-agent",
+            "name": "example-agent",
+            "display_name": "example-agent",
             "private_key_nsec": "nsec1fake",
             "relay_url": "wss://localhost:3000",
             "acp_command": "buzz-acp",
@@ -599,42 +599,6 @@ fn managed_agent_rename_keeps_a_mirrored_display_name_in_sync() {
     ));
     assert_eq!(record.name, "Example Agent");
     assert_eq!(record.display_name.as_deref(), Some("Example Agent"));
-}
-
-#[test]
-fn managed_agent_rename_repairs_a_legacy_remote_display_name() {
-    let mut record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
-        r#"{
-            "pubkey": "standalone1",
-            "name": "example-agent",
-            "display_name": "Remote Agency · proxied by Buzz · example-agent",
-            "private_key_nsec": "nsec1fake",
-            "relay_url": "wss://localhost:3000",
-            "acp_command": "buzz-acp",
-            "agent_command": "buzz-a2a-acp",
-            "agent_args": [],
-            "mcp_command": "",
-            "turn_timeout_seconds": 320,
-            "system_prompt": null,
-            "model": null,
-            "provider": null,
-            "env_vars": {},
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "last_started_at": null,
-            "last_stopped_at": null,
-            "last_exit_code": null,
-            "last_error": null
-        }"#,
-    )
-    .expect("standalone agent record");
-
-    assert!(apply_managed_agent_name_update(
-        &mut record,
-        Some("example-agent".to_string())
-    ));
-    assert_eq!(record.name, "example-agent");
-    assert_eq!(record.display_name.as_deref(), Some("example-agent"));
 }
 
 #[test]

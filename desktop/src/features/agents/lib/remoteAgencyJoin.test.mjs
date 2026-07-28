@@ -22,7 +22,7 @@ const descriptor = {
   agents: [],
 };
 
-test("builds the reviewed Remote Agency adapter request without secrets", () => {
+test("builds the reviewed Remote Team adapter request without secrets", () => {
   const input = buildRemoteAgencyManagedAgentInput({
     id: "agent-1",
     name: "Scout",
