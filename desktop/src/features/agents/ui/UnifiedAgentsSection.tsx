@@ -33,6 +33,7 @@ type UnifiedAgentsSectionProps = {
   actionErrorMessage: string | null;
   actionNoticeMessage: string | null;
   agents: ManagedAgent[];
+  remoteAgentPubkeys: ReadonlySet<string>;
   agentsError: Error | null;
   isActionPending: boolean;
   isAgentsLoading: boolean;
@@ -74,6 +75,7 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     actionNoticeMessage,
     defaultModel,
     agents,
+    remoteAgentPubkeys,
     agentsError,
     isActionPending,
     isAgentsLoading,
@@ -103,6 +105,19 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
   const { groups, ungrouped, unknown } = React.useMemo(
     () => buildUnifiedGroups(personas, agents),
     [personas, agents],
+  );
+  const remoteStandaloneAgents = React.useMemo(
+    () =>
+      [...unknown, ...ungrouped].filter((agent) =>
+        remoteAgentPubkeys.has(agent.pubkey),
+      ),
+    [remoteAgentPubkeys, ungrouped, unknown],
+  );
+  const localUnknownAgents = unknown.filter(
+    (agent) => !remoteAgentPubkeys.has(agent.pubkey),
+  );
+  const localUngroupedAgents = ungrouped.filter(
+    (agent) => !remoteAgentPubkeys.has(agent.pubkey),
   );
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   const {
@@ -174,6 +189,11 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
                   defaultModel={defaultModel}
                   key={group.persona.id}
                   persona={group.persona}
+                  isRemote={
+                    profileAgent
+                      ? remoteAgentPubkeys.has(profileAgent.pubkey)
+                      : false
+                  }
                   startingAgentPubkey={startingAgentPubkey}
                   startingPersonaIds={startingPersonaIds}
                   onOpenAgentProfile={onOpenAgentProfile}
@@ -192,26 +212,42 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
             />
           </div>
 
-          {unknown.length > 0 ? (
+          {remoteStandaloneAgents.length > 0 ? (
             <CollapsibleAgentGroup
-              agents={unknown}
+              agents={remoteStandaloneAgents}
               collapsed={collapsed}
               defaultModel={defaultModel}
-              groupKey="__unknown__"
-              label="Unknown agents"
+              groupKey="__remote__"
+              label="Remote agents"
+              remoteAgentPubkeys={remoteAgentPubkeys}
               startingAgentPubkey={startingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
               onStartAgent={onStartAgent}
             />
           ) : null}
-          {ungrouped.length > 0 ? (
+          {localUnknownAgents.length > 0 ? (
             <CollapsibleAgentGroup
-              agents={ungrouped}
+              agents={localUnknownAgents}
+              collapsed={collapsed}
+              defaultModel={defaultModel}
+              groupKey="__unknown__"
+              label="Unknown agents"
+              remoteAgentPubkeys={remoteAgentPubkeys}
+              startingAgentPubkey={startingAgentPubkey}
+              onToggle={toggle}
+              onOpenAgentProfile={onOpenAgentProfile}
+              onStartAgent={onStartAgent}
+            />
+          ) : null}
+          {localUngroupedAgents.length > 0 ? (
+            <CollapsibleAgentGroup
+              agents={localUngroupedAgents}
               collapsed={collapsed}
               defaultModel={defaultModel}
               groupKey="__ungrouped__"
               label="Custom agents"
+              remoteAgentPubkeys={remoteAgentPubkeys}
               startingAgentPubkey={startingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
@@ -243,6 +279,7 @@ function AgentPersonaCard({
   actions,
   agent,
   defaultModel,
+  isRemote,
   persona,
   startingAgentPubkey,
   startingPersonaIds,
@@ -254,6 +291,7 @@ function AgentPersonaCard({
   actions?: React.ReactNode;
   agent: ManagedAgent | undefined;
   defaultModel: string;
+  isRemote: boolean;
   persona: AgentPersona;
   startingAgentPubkey: string | null;
   startingPersonaIds: ReadonlySet<string>;
@@ -266,15 +304,21 @@ function AgentPersonaCard({
   onStartPersona: (persona: AgentPersona) => void;
 }) {
   const title = persona.displayName;
-  const modelLabel = resolveAgentCardModelLabel({
-    agent,
-    personaModel: persona.model,
-    defaultModel,
-  });
+  const modelLabel = isRemote
+    ? "Remote runtime"
+    : resolveAgentCardModelLabel({
+        agent,
+        personaModel: persona.model,
+        defaultModel,
+      });
   const isActive = agent ? isManagedAgentActive(agent) : false;
   const profileQuery = useUserProfileQuery(agent?.pubkey);
   const avatarUrl = agent
-    ? firstAvatarUrl(persona.avatarUrl, profileQuery.data?.avatarUrl)
+    ? firstAvatarUrl(
+        persona.avatarUrl,
+        agent.avatarUrl,
+        profileQuery.data?.avatarUrl,
+      )
     : persona.avatarUrl;
   const friendlyError = agent
     ? friendlyAgentLastError(agent.lastError, agent.lastErrorCode)?.copy
@@ -328,17 +372,11 @@ function AgentPersonaCard({
         onOpenPersonaProfile(persona);
       }}
       statusBadge={
-        agent?.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
-        ) : agent?.needsRestart ? (
-          <Badge className="gap-1" variant="warning">
-            <RefreshCw className="h-3 w-3" />
-            Restart required
-          </Badge>
-        ) : null
+        <AgentStatusBadges
+          isRemote={isRemote}
+          needsRestart={agent?.needsRestart ?? false}
+          personaOrphaned={agent?.personaOrphaned ?? false}
+        />
       }
     />
   );
@@ -347,12 +385,14 @@ function AgentPersonaCard({
 function StandaloneAgentCard({
   agent,
   defaultModel,
+  isRemote,
   startingAgentPubkey,
   onOpenAgentProfile,
   onStartAgent,
 }: {
   agent: ManagedAgent;
   defaultModel: string;
+  isRemote: boolean;
   startingAgentPubkey: string | null;
   onOpenAgentProfile: (
     pubkey: string,
@@ -367,6 +407,10 @@ function StandaloneAgentCard({
     agent.lastErrorCode,
   )?.copy;
   const isActive = isManagedAgentActive(agent);
+  const avatarUrl = firstAvatarUrl(
+    agent.avatarUrl,
+    profileQuery.data?.avatarUrl,
+  );
   const opensRuntimeTab = Boolean(friendlyError && !isActive);
 
   return (
@@ -375,7 +419,7 @@ function StandaloneAgentCard({
       avatar={
         <AgentRuntimeAvatarControl
           activeTestId={`agent-runtime-active-${agent.pubkey}`}
-          avatarUrl={profileQuery.data?.avatarUrl}
+          avatarUrl={avatarUrl}
           errorLabel={friendlyError}
           errorTestId={`agent-runtime-error-${agent.pubkey}`}
           isActive={isActive}
@@ -388,14 +432,18 @@ function StandaloneAgentCard({
           onStart={() => onStartAgent(agent.pubkey)}
         />
       }
-      avatarUrl={profileQuery.data?.avatarUrl}
+      avatarUrl={avatarUrl}
       dataTestId={`managed-agent-${agent.pubkey}`}
       label={title}
-      modelLabel={resolveAgentCardModelLabel({
-        agent,
-        personaModel: null,
-        defaultModel,
-      })}
+      modelLabel={
+        isRemote
+          ? "Remote runtime"
+          : resolveAgentCardModelLabel({
+              agent,
+              personaModel: null,
+              defaultModel,
+            })
+      }
       onClick={() => {
         onOpenAgentProfile(
           agent.pubkey,
@@ -403,17 +451,11 @@ function StandaloneAgentCard({
         );
       }}
       statusBadge={
-        agent.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
-        ) : agent.needsRestart ? (
-          <Badge className="gap-1" variant="warning">
-            <RefreshCw className="h-3 w-3" />
-            Restart required
-          </Badge>
-        ) : null
+        <AgentStatusBadges
+          isRemote={isRemote}
+          needsRestart={agent.needsRestart}
+          personaOrphaned={agent.personaOrphaned}
+        />
       }
     />
   );
@@ -427,6 +469,35 @@ function firstAvatarUrl(
     if (trimmed) return trimmed;
   }
   return null;
+}
+
+function AgentStatusBadges({
+  isRemote,
+  needsRestart,
+  personaOrphaned,
+}: {
+  isRemote: boolean;
+  needsRestart: boolean;
+  personaOrphaned: boolean;
+}) {
+  if (!isRemote && !needsRestart && !personaOrphaned) return null;
+
+  return (
+    <span className="mt-1 flex flex-wrap gap-1">
+      {isRemote ? <Badge variant="info">Remote</Badge> : null}
+      {personaOrphaned ? (
+        <Badge className="gap-1" variant="warning">
+          <AlertTriangle className="h-3 w-3" />
+          Configuration missing
+        </Badge>
+      ) : needsRestart ? (
+        <Badge className="gap-1" variant="warning">
+          <RefreshCw className="h-3 w-3" />
+          Restart required
+        </Badge>
+      ) : null}
+    </span>
+  );
 }
 
 function NewAgentCard({
@@ -505,6 +576,7 @@ function CollapsibleAgentGroup({
   agents,
   collapsed,
   defaultModel,
+  remoteAgentPubkeys,
   startingAgentPubkey,
   onToggle,
   onOpenAgentProfile,
@@ -515,6 +587,7 @@ function CollapsibleAgentGroup({
   agents: ManagedAgent[];
   collapsed: ReadonlySet<string>;
   defaultModel: string;
+  remoteAgentPubkeys: ReadonlySet<string>;
   startingAgentPubkey: string | null;
   onToggle: (key: string) => void;
   onOpenAgentProfile: (
@@ -545,6 +618,7 @@ function CollapsibleAgentGroup({
             <StandaloneAgentCard
               agent={agent}
               defaultModel={defaultModel}
+              isRemote={remoteAgentPubkeys.has(agent.pubkey)}
               key={agent.pubkey}
               startingAgentPubkey={startingAgentPubkey}
               onOpenAgentProfile={onOpenAgentProfile}

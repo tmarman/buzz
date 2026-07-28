@@ -1,6 +1,7 @@
 import {
   CopyPlus,
   EllipsisVertical,
+  Network,
   Pencil,
   Rocket,
   Share2,
@@ -9,7 +10,8 @@ import {
 } from "lucide-react";
 
 import { resolveTeamPersonas } from "@/features/agents/lib/teamPersonas";
-import type { AgentPersona, AgentTeam } from "@/shared/api/types";
+import type { RemoteAgencyBinding } from "@/shared/api/remoteAgencyTypes";
+import type { AgentPersona, AgentTeam, ManagedAgent } from "@/shared/api/types";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +23,7 @@ import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
 import { SectionHeader } from "@/shared/ui/PageHeader";
 import { CreateIdentityCard } from "./CreateIdentityCard";
 import { TeamIdentityCard } from "./TeamIdentityCard";
+import { RemoteTeamIdentityCard } from "./RemoteTeamIdentityCard";
 
 const TEAM_CARD_COLUMN_CLASS = "w-full";
 const TEAM_CARD_GRID_CLASS = `${TEAM_CARD_COLUMN_CLASS} mx-auto grid max-w-[996px] grid-cols-[repeat(auto-fill,minmax(220px,240px))] justify-center gap-3`;
@@ -28,6 +31,9 @@ const TEAM_CARD_GRID_CLASS = `${TEAM_CARD_COLUMN_CLASS} mx-auto grid max-w-[996p
 type TeamsSectionProps = {
   teams: AgentTeam[];
   personas: AgentPersona[];
+  remoteBindings: RemoteAgencyBinding[];
+  remoteAgents: ManagedAgent[];
+  remoteError: Error | null;
   error: Error | null;
   isLoading: boolean;
   isPending: boolean;
@@ -38,11 +44,15 @@ type TeamsSectionProps = {
   onAddToChannel: (team: AgentTeam) => void;
   onShare: (team: AgentTeam) => void;
   onImport: () => void;
+  onAddRemote: () => void;
 };
 
 export function TeamsSection({
   teams,
   personas,
+  remoteBindings,
+  remoteAgents,
+  remoteError,
   error,
   isLoading,
   isPending,
@@ -53,13 +63,14 @@ export function TeamsSection({
   onAddToChannel,
   onShare,
   onImport,
+  onAddRemote,
 }: TeamsSectionProps) {
   return (
     <section className="relative space-y-4" data-testid="agents-library-teams">
       <div className={TEAM_CARD_COLUMN_CLASS}>
         <SectionHeader
           title="Agent teams"
-          description="Group agents that you can add to a channel together."
+          description="Create local teams or add an existing team from a connected runtime."
         />
       </div>
 
@@ -170,8 +181,16 @@ export function TeamsSection({
               </TeamIdentityCard>
             );
           })}
+          {remoteBindings.map((binding) => (
+            <RemoteTeamIdentityCard
+              agents={remoteAgents}
+              binding={binding}
+              key={`${binding.agencyId}:${binding.sourceUrl}`}
+            />
+          ))}
           <NewTeamCard
             isPending={isPending}
+            onAddRemote={onAddRemote}
             onCreate={onCreate}
             onImport={onImport}
           />
@@ -185,16 +204,25 @@ export function TeamsSection({
           {error.message}
         </p>
       ) : null}
+      {remoteError ? (
+        <p
+          className={`${TEAM_CARD_COLUMN_CLASS} rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive`}
+        >
+          {remoteError.message}
+        </p>
+      ) : null}
     </section>
   );
 }
 
 function NewTeamCard({
   isPending,
+  onAddRemote,
   onCreate,
   onImport,
 }: {
   isPending: boolean;
+  onAddRemote: () => void;
   onCreate: () => void;
   onImport: () => void;
 }) {
@@ -214,6 +242,11 @@ function NewTeamCard({
         <DropdownMenuItem disabled={isPending} onClick={onCreate}>
           Create team
         </DropdownMenuItem>
+        <DropdownMenuItem disabled={isPending} onClick={onAddRemote}>
+          <Network className="h-4 w-4" />
+          Add remote team
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem disabled={isPending} onClick={onImport}>
           <Upload className="h-4 w-4" />
           Import team snapshot
