@@ -602,6 +602,42 @@ fn managed_agent_rename_keeps_a_mirrored_display_name_in_sync() {
 }
 
 #[test]
+fn managed_agent_rename_repairs_a_legacy_remote_display_name() {
+    let mut record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
+        r#"{
+            "pubkey": "standalone1",
+            "name": "smithy",
+            "display_name": "Remote Agency · proxied by Buzz · smithy",
+            "private_key_nsec": "nsec1fake",
+            "relay_url": "wss://localhost:3000",
+            "acp_command": "buzz-acp",
+            "agent_command": "buzz-a2a-acp",
+            "agent_args": [],
+            "mcp_command": "",
+            "turn_timeout_seconds": 320,
+            "system_prompt": null,
+            "model": null,
+            "provider": null,
+            "env_vars": {},
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "last_started_at": null,
+            "last_stopped_at": null,
+            "last_exit_code": null,
+            "last_error": null
+        }"#,
+    )
+    .expect("standalone agent record");
+
+    assert!(apply_managed_agent_name_update(
+        &mut record,
+        Some("smithy".to_string())
+    ));
+    assert_eq!(record.name, "smithy");
+    assert_eq!(record.display_name.as_deref(), Some("smithy"));
+}
+
+#[test]
 fn managed_agent_rename_preserves_a_custom_display_name() {
     let mut record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
         r#"{
