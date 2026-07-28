@@ -9,6 +9,7 @@ import {
 import {
   connectMcpAppBridge,
   createMcpAppBridge,
+  mcpAppSandboxOrigin,
   observeMcpAppHostContext,
   type McpAppBridgeCallbacks,
 } from "@/features/mcp-apps/lib/mcpAppBridge";
@@ -32,6 +33,7 @@ export type McpAppFrameProps = McpAppBridgeCallbacks & {
 function waitForSandboxProxy(
   iframe: HTMLIFrameElement,
   sandboxUrl: string,
+  expectedOrigin: string,
   signal: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -51,6 +53,7 @@ function waitForSandboxProxy(
     const onMessage = (event: MessageEvent) => {
       if (
         event.source === iframe.contentWindow &&
+        event.origin === expectedOrigin &&
         event.data?.method === PROXY_READY_METHOD
       ) {
         cleanup();
@@ -93,6 +96,8 @@ export function McpAppFrame({
     let bridge: ReturnType<typeof createMcpAppBridge> | null = null;
     let disposeContext: (() => void) | null = null;
     let viewId: string | null = null;
+    let initialToolStarted = false;
+    let initialToolFinished = false;
 
     const start = async () => {
       try {
@@ -101,6 +106,7 @@ export function McpAppFrame({
         if (abortController.signal.aborted) return;
         viewId = prepared.viewId;
         onPermissionsRequested?.(prepared.requestedPermissions);
+        const sandboxOrigin = mcpAppSandboxOrigin(prepared.sandboxUrl);
 
         bridge = createMcpAppBridge(serverId, {
           onMessage,
@@ -112,9 +118,10 @@ export function McpAppFrame({
         await waitForSandboxProxy(
           iframe,
           prepared.sandboxUrl,
+          sandboxOrigin,
           abortController.signal,
         );
-        await connectMcpAppBridge(bridge, iframe);
+        await connectMcpAppBridge(bridge, iframe, sandboxOrigin);
 
         const initialized = new Promise<void>((resolve) => {
           const handleInitialized = () => {
@@ -127,21 +134,25 @@ export function McpAppFrame({
           html: prepared.html,
           csp: prepared.csp,
           permissions: {},
-          sandbox: "allow-scripts allow-same-origin allow-forms",
         });
         await initialized;
         if (abortController.signal.aborted) return;
 
         disposeContext = observeMcpAppHostContext(bridge, iframe);
         if (initialTool) {
+          initialToolStarted = true;
           await bridge.sendToolInput({ arguments: initialTool.arguments });
-          const result = await callMcpAppTool(
-            serverId,
-            initialTool.name,
-            initialTool.arguments,
-            "host",
-          );
-          await bridge.sendToolResult(result);
+          try {
+            const result = await callMcpAppTool(
+              serverId,
+              initialTool.name,
+              initialTool.arguments,
+              "host",
+            );
+            await bridge.sendToolResult(result);
+          } finally {
+            initialToolFinished = true;
+          }
         }
         onReady?.();
       } catch (cause) {
@@ -157,12 +168,22 @@ export function McpAppFrame({
     return () => {
       abortController.abort();
       disposeContext?.();
-      if (bridge) {
-        void bridge.teardownResource({}).catch(() => undefined);
-        void bridge.close();
-      }
-      if (viewId) void releaseMcpAppView(viewId);
-      iframe.removeAttribute("src");
+      const closingBridge = bridge;
+      const closingViewId = viewId;
+      void (async () => {
+        if (closingBridge) {
+          if (initialToolStarted && !initialToolFinished) {
+            await closingBridge
+              .sendToolCancelled({ reason: "The channel app was closed." })
+              .catch(() => undefined);
+          }
+          await closingBridge.teardownResource({}).catch(() => undefined);
+          await closingBridge.close().catch(() => undefined);
+        }
+        if (closingViewId) {
+          await releaseMcpAppView(closingViewId).catch(() => undefined);
+        }
+      })();
     };
   }, [
     initialTool,
@@ -186,7 +207,7 @@ export function McpAppFrame({
       <iframe
         className="h-full min-h-48 w-full border-0 bg-background"
         ref={iframeRef}
-        sandbox="allow-forms allow-same-origin allow-scripts"
+        sandbox="allow-same-origin allow-scripts"
         title={title}
       />
       {error ? (

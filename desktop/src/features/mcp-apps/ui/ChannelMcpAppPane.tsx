@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import type { McpAppMessage } from "@/features/mcp-apps/lib/mcpAppBridge";
 import type { ChannelMcpAppInstallation } from "@/features/mcp-apps/lib/channelMcpAppStorage";
 import {
   McpAppFrame,
@@ -14,10 +15,14 @@ import { cn } from "@/shared/lib/cn";
 
 type ChannelMcpAppPaneProps = Pick<
   McpAppFrameProps,
-  "onMessage" | "onModelContext" | "onOpenLink"
+  "onModelContext" | "onOpenLink"
 > & {
   app: ChannelMcpAppInstallation;
   header: React.ReactNode;
+  onMessage?: (
+    app: ChannelMcpAppInstallation,
+    message: McpAppMessage,
+  ) => Promise<void> | void;
 };
 
 export function ChannelMcpAppPane({
@@ -29,6 +34,14 @@ export function ChannelMcpAppPane({
 }: ChannelMcpAppPaneProps) {
   const [serverId, setServerId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const initialTool = React.useMemo(
+    () => ({ name: app.toolName, arguments: app.arguments }),
+    [app.arguments, app.toolName],
+  );
+  const handleMessage = React.useCallback(
+    (message: McpAppMessage) => onMessage?.(app, message),
+    [app, onMessage],
+  );
 
   React.useEffect(() => {
     let active = true;
@@ -92,8 +105,8 @@ export function ChannelMcpAppPane({
         {serverId ? (
           <McpAppFrame
             className="min-h-0 flex-1"
-            initialTool={{ name: app.toolName, arguments: app.arguments }}
-            onMessage={onMessage}
+            initialTool={initialTool}
+            onMessage={handleMessage}
             onModelContext={onModelContext}
             onOpenLink={onOpenLink}
             resourceUri={app.resourceUri}

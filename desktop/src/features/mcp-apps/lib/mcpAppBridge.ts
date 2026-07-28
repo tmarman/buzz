@@ -1,14 +1,20 @@
 import {
   AppBridge,
-  PostMessageTransport,
   type McpUiHostContext,
   type McpUiResourceCsp,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
+  Transport,
+  TransportSendOptions,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
+import type {
   CallToolResult,
+  JSONRPCMessage,
   ListResourcesResult,
+  MessageExtraInfo,
   ReadResourceResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   callMcpAppTool,
@@ -18,6 +24,66 @@ import {
 } from "@/shared/api/tauriMcpApps";
 
 const HOST_INFO = { name: "Buzz Desktop", version: "1.0.0" };
+
+export function mcpAppSandboxOrigin(sandboxUrl: string): string {
+  const url = new URL(sandboxUrl);
+  if (url.origin !== "null") return url.origin;
+  if (!url.host) throw new Error("MCP App sandbox URL has no origin");
+  return `${url.protocol}//${url.host}`;
+}
+
+class OriginValidatedPostMessageTransport implements Transport {
+  private readonly eventSource: MessageEventSource;
+  private readonly eventTarget: Window;
+  private readonly expectedOrigin: string;
+  private readonly messageListener: (event: MessageEvent) => void;
+
+  constructor(
+    eventTarget: Window,
+    eventSource: MessageEventSource,
+    expectedOrigin: string,
+  ) {
+    this.eventTarget = eventTarget;
+    this.eventSource = eventSource;
+    this.expectedOrigin = expectedOrigin;
+    this.messageListener = (event) => {
+      if (
+        event.source !== this.eventSource ||
+        event.origin !== this.expectedOrigin
+      ) {
+        return;
+      }
+      const parsed = JSONRPCMessageSchema.safeParse(event.data);
+      if (parsed.success) {
+        this.onmessage?.(parsed.data);
+      } else if (event.data?.jsonrpc === "2.0") {
+        this.onerror?.(
+          new Error(`Invalid MCP App message: ${parsed.error.message}`),
+        );
+      }
+    };
+  }
+
+  async start(): Promise<void> {
+    window.addEventListener("message", this.messageListener);
+  }
+
+  async send(
+    message: JSONRPCMessage,
+    _options?: TransportSendOptions,
+  ): Promise<void> {
+    this.eventTarget.postMessage(message, this.expectedOrigin);
+  }
+
+  async close(): Promise<void> {
+    window.removeEventListener("message", this.messageListener);
+    this.onclose?.();
+  }
+
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+}
 
 export type McpAppMessage = {
   role: "user";
@@ -136,12 +202,19 @@ export function createMcpAppBridge(
 export async function connectMcpAppBridge(
   bridge: AppBridge,
   iframe: HTMLIFrameElement,
+  expectedOrigin: string,
 ): Promise<void> {
   const targetWindow = iframe.contentWindow;
   if (!targetWindow) {
     throw new Error("MCP App sandbox browsing context is unavailable");
   }
-  await bridge.connect(new PostMessageTransport(targetWindow, targetWindow));
+  await bridge.connect(
+    new OriginValidatedPostMessageTransport(
+      targetWindow,
+      targetWindow,
+      expectedOrigin,
+    ),
+  );
 }
 
 export function observeMcpAppHostContext(

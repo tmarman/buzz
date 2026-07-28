@@ -71,6 +71,35 @@ function parseArguments(value: string): Record<string, unknown> | null {
   }
 }
 
+function advertisedDomains(
+  server: McpAppServerDescriptor | null,
+  tool: McpAppTool | null,
+): string[] {
+  if (!server || !tool?.uiResourceUri) return [];
+  const resource = server.resources.find(
+    (candidate) => candidate.uri === tool.uiResourceUri,
+  );
+  const ui =
+    resource?.meta.ui &&
+    typeof resource.meta.ui === "object" &&
+    !Array.isArray(resource.meta.ui)
+      ? (resource.meta.ui as Record<string, unknown>)
+      : null;
+  const csp =
+    ui?.csp && typeof ui.csp === "object" && !Array.isArray(ui.csp)
+      ? (ui.csp as Record<string, unknown>)
+      : null;
+  return [
+    csp?.connectDomains,
+    csp?.resourceDomains,
+    csp?.frameDomains,
+    csp?.baseUriDomains,
+  ]
+    .flatMap((value) => (Array.isArray(value) ? value : []))
+    .filter((value): value is string => typeof value === "string")
+    .filter((value, index, values) => values.indexOf(value) === index);
+}
+
 export function ChannelMcpAppDialog({
   apps,
   channelId,
@@ -98,6 +127,10 @@ export function ChannelMcpAppDialog({
   const parsedArguments = React.useMemo(
     () => parseArguments(argumentsJson),
     [argumentsJson],
+  );
+  const selectedDomains = React.useMemo(
+    () => advertisedDomains(server, selectedTool),
+    [selectedTool, server],
   );
 
   const clearConnectedServer = React.useCallback(() => {
@@ -288,26 +321,46 @@ export function ChannelMcpAppDialog({
           ) : null}
 
           {selectedTool ? (
-            <label
-              className="block space-y-1.5"
-              htmlFor="mcp-app-tool-arguments"
-            >
-              <span className="text-xs font-medium text-muted-foreground">
-                Tool arguments
-              </span>
-              <Textarea
-                aria-invalid={parsedArguments === null}
-                className="min-h-28 font-mono text-xs"
-                id="mcp-app-tool-arguments"
-                onChange={(event) => setArgumentsJson(event.target.value)}
-                value={argumentsJson}
-              />
-              {parsedArguments === null ? (
-                <span className="text-xs text-destructive">
-                  Enter one JSON object.
+            <>
+              <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/20 p-3">
+                <p className="text-xs font-medium text-foreground">
+                  Advertised external domains
+                </p>
+                {selectedDomains.length > 0 ? (
+                  <ul className="space-y-1 font-mono text-2xs text-muted-foreground">
+                    {selectedDomains.map((domain) => (
+                      <li className="break-all" key={domain}>
+                        {domain}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    None declared in the discovery metadata.
+                  </p>
+                )}
+              </div>
+              <label
+                className="block space-y-1.5"
+                htmlFor="mcp-app-tool-arguments"
+              >
+                <span className="text-xs font-medium text-muted-foreground">
+                  Tool arguments
                 </span>
-              ) : null}
-            </label>
+                <Textarea
+                  aria-invalid={parsedArguments === null}
+                  className="min-h-28 font-mono text-xs"
+                  id="mcp-app-tool-arguments"
+                  onChange={(event) => setArgumentsJson(event.target.value)}
+                  value={argumentsJson}
+                />
+                {parsedArguments === null ? (
+                  <span className="text-xs text-destructive">
+                    Enter one JSON object.
+                  </span>
+                ) : null}
+              </label>
+            </>
           ) : null}
         </section>
 

@@ -80,8 +80,19 @@ fn csp_drops_invalid_sources_and_defaults_closed() {
     });
     assert!(csp.contains("connect-src https://api.example.com"));
     assert!(!csp.contains("https://example.com/path"));
-    assert!(csp.contains("img-src data: blob: 'none'"));
+    assert!(csp.contains("script-src 'self' 'unsafe-inline'"));
+    assert!(csp.contains("img-src 'self' data: blob:"));
+    assert!(csp.contains("frame-src 'self'"));
+    assert!(!csp.contains("frame-src 'self' buzz-mcp-app:"));
     assert!(csp.contains("object-src 'none'"));
+}
+
+#[test]
+fn inner_app_frame_uses_an_opaque_origin_and_fixed_sandbox() {
+    assert!(SANDBOX_PROXY_HTML.contains(r#"inner.setAttribute("sandbox", "allow-scripts")"#));
+    assert!(SANDBOX_PROXY_HTML.contains("inner.srcdoc = html"));
+    assert!(!SANDBOX_PROXY_HTML.contains("allow-same-origin allow-forms"));
+    assert!(!SANDBOX_PROXY_HTML.contains("inner.setAttribute(\"sandbox\", sandbox)"));
 }
 
 #[test]

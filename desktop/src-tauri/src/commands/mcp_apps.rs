@@ -63,10 +63,10 @@ const SANDBOX_PROXY_HTML: &str = r#"<!doctype html>
     try { allowedHostOrigins.add(new URL(document.referrer).origin); } catch {}
   }
 
-  const ownOrigin = window.location.origin;
   const inner = document.createElement("iframe");
-  inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+  inner.setAttribute("sandbox", "allow-scripts");
   document.body.appendChild(inner);
+  let hostOrigin = null;
 
   const resourceReady = "ui/notifications/sandbox-resource-ready";
   const proxyReady = "ui/notifications/sandbox-proxy-ready";
@@ -83,25 +83,21 @@ const SANDBOX_PROXY_HTML: &str = r#"<!doctype html>
   window.addEventListener("message", (event) => {
     if (event.source === window.parent) {
       if (!allowedHostOrigins.has(event.origin)) return;
+      hostOrigin = event.origin;
       if (event.data?.method === resourceReady) {
-        const { html, sandbox, permissions } = event.data.params ?? {};
-        if (typeof sandbox === "string") inner.setAttribute("sandbox", sandbox);
+        const { html, permissions } = event.data.params ?? {};
         const allow = permissionPolicy(permissions);
         if (allow) inner.setAttribute("allow", allow);
         if (typeof html === "string") {
-          const doc = inner.contentDocument ?? inner.contentWindow?.document;
-          if (!doc) return;
-          doc.open();
-          doc.write(html);
-          doc.close();
+          inner.srcdoc = html;
         }
         return;
       }
       inner.contentWindow?.postMessage(event.data, "*");
       return;
     }
-    if (event.source === inner.contentWindow && event.origin === ownOrigin) {
-      window.parent.postMessage(event.data, "*");
+    if (event.source === inner.contentWindow && hostOrigin) {
+      window.parent.postMessage(event.data, hostOrigin);
     }
   });
 
@@ -626,14 +622,14 @@ fn sources(values: &[String], fallback: &str) -> String {
 }
 
 fn sandbox_csp(csp: &McpAppResourceCsp) -> String {
-    let resources = sources(&csp.resource_domains, "'none'");
+    let resources = sources(&csp.resource_domains, "");
     let connects = sources(&csp.connect_domains, "'none'");
-    let frames = sources(&csp.frame_domains, "'self'");
-    let bases = sources(&csp.base_uri_domains, "'self'");
+    let frames = sources(&csp.frame_domains, "");
+    let bases = sources(&csp.base_uri_domains, "'none'");
     format!(
-        "default-src 'none'; script-src 'unsafe-inline' {resources}; \
-         style-src 'unsafe-inline' {resources}; img-src data: blob: {resources}; \
-         font-src data: {resources}; media-src data: blob: {resources}; \
+        "default-src 'none'; script-src 'self' 'unsafe-inline' {resources}; \
+         style-src 'self' 'unsafe-inline' {resources}; img-src 'self' data: blob: {resources}; \
+         font-src 'self' data: {resources}; media-src 'self' data: blob: {resources}; \
          connect-src {connects}; frame-src 'self' {frames}; base-uri {bases}; \
          object-src 'none'; form-action 'none'"
     )

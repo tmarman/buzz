@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { defaultMcpAppHostContext } from "./mcpAppBridge.ts";
+import {
+  defaultMcpAppHostContext,
+  mcpAppSandboxOrigin,
+} from "./mcpAppBridge.ts";
+
+test("derives an exact origin for the custom sandbox protocol", () => {
+  assert.equal(
+    mcpAppSandboxOrigin("buzz-mcp-app://localhost/7f6d"),
+    "buzz-mcp-app://localhost",
+  );
+});
 
 test("default host context identifies Buzz as a desktop host", () => {
   const originalDocument = globalThis.document;

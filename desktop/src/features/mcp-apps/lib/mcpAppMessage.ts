@@ -1,5 +1,11 @@
 import type { McpAppMessage } from "@/features/mcp-apps/lib/mcpAppBridge";
 
+export const MCP_APP_POST_MAX_CHARS = 8_000;
+
+function normalizeText(value: string): string {
+  return value.trim().replace(/\n(?:[ \t]*\n){2,}/g, "\n\n");
+}
+
 export function mcpAppMessageText(message: McpAppMessage): string | null {
   const blocks = Array.isArray(message.content)
     ? message.content
@@ -18,7 +24,7 @@ export function mcpAppMessageText(message: McpAppMessage): string | null {
       }
       return [];
     })
-    .map((value) => value.trim())
+    .map(normalizeText)
     .filter(Boolean)
     .join("\n\n");
   return text || null;

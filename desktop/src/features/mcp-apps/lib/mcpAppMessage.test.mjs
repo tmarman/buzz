@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mcpAppMessageText } from "./mcpAppMessage.ts";
+import { MCP_APP_POST_MAX_CHARS, mcpAppMessageText } from "./mcpAppMessage.ts";
 
 test("extracts text from standard MCP content blocks", () => {
   assert.equal(
@@ -35,4 +35,15 @@ test("rejects messages without text", () => {
     }),
     null,
   );
+});
+
+test("collapses excessive blank lines without flattening paragraphs", () => {
+  assert.equal(
+    mcpAppMessageText({
+      role: "user",
+      content: "First paragraph.\n\n\n\n\nSecond paragraph.",
+    }),
+    "First paragraph.\n\nSecond paragraph.",
+  );
+  assert.equal(MCP_APP_POST_MAX_CHARS, 8_000);
 });
