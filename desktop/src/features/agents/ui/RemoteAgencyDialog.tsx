@@ -9,11 +9,13 @@ import {
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useCreateManagedAgentMutation } from "@/features/agents/hooks";
 import {
+  AGENCY_CONTEXT_EXTENSION_URI,
   bindingFromRemoteAgencyProxies,
   buildRemoteAgencyManagedAgentInput,
   findRemoteAgencyBinding,
   findRemoteAgencyProxy,
   joinableRemoteAgentIds,
+  supportsAgencyContext,
 } from "@/features/agents/lib/remoteAgencyJoin";
 import {
   addChannelMembers,
@@ -66,6 +68,7 @@ export function RemoteAgencyDialog({
   const [descriptor, setDescriptor] =
     React.useState<RemoteAgencyDescriptor | null>(null);
   const [selectedAgentIds, setSelectedAgentIds] = React.useState<string[]>([]);
+  const [scopeRef, setScopeRef] = React.useState("");
   const [channelId, setChannelId] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [credentialMessage, setCredentialMessage] = React.useState<
@@ -79,6 +82,9 @@ export function RemoteAgencyDialog({
     () => targetChannels(channelsQuery.data),
     [channelsQuery.data],
   );
+  const hasAgencyContext = descriptor
+    ? supportsAgencyContext(descriptor)
+    : false;
 
   React.useEffect(() => {
     if (open && !channelId && channels.length > 0) {
@@ -90,6 +96,7 @@ export function RemoteAgencyDialog({
     setSourceUrl("");
     setDescriptor(null);
     setSelectedAgentIds([]);
+    setScopeRef("");
     setChannelId("");
     setError(null);
     setCredentialMessage(null);
@@ -110,8 +117,23 @@ export function RemoteAgencyDialog({
     setIsPreviewing(true);
     try {
       const next = await previewRemoteAgency(sourceUrl.trim());
+      const existingBinding = findRemoteAgencyBinding(
+        await listRemoteAgencies(),
+        next,
+      );
+      const existingScopeRefs = [
+        ...new Set(
+          (existingBinding?.proxies ?? [])
+            .filter(
+              (proxy) =>
+                proxy.contextExtensionUri === AGENCY_CONTEXT_EXTENSION_URI,
+            )
+            .flatMap((proxy) => (proxy.scopeRef ? [proxy.scopeRef] : [])),
+        ),
+      ];
       setDescriptor(next);
       setSelectedAgentIds(joinableRemoteAgentIds(next));
+      setScopeRef(existingScopeRefs.length === 1 ? existingScopeRefs[0] : "");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -124,6 +146,13 @@ export function RemoteAgencyDialog({
     setError(null);
     setIsJoining(true);
     try {
+      const invocationContext = hasAgencyContext
+        ? {
+            extensionUri: AGENCY_CONTEXT_EXTENSION_URI,
+            organizationRef: descriptor.agencyId,
+            ...(scopeRef ? { scopeRef } : {}),
+          }
+        : undefined;
       const joinedPubkeys: string[] = [];
       const failures: string[] = [];
       const currentBindings = await listRemoteAgencies();
@@ -156,7 +185,10 @@ export function RemoteAgencyDialog({
         if (existingProxy) {
           joinedPubkeys.push(existingProxy.pubkey);
           try {
-            const desired = buildRemoteAgencyManagedAgentInput(remote);
+            const desired = buildRemoteAgencyManagedAgentInput(
+              remote,
+              invocationContext,
+            );
             await stopManagedAgent(existingProxy.pubkey);
             await updateManagedAgent({
               pubkey: existingProxy.pubkey,
@@ -177,6 +209,8 @@ export function RemoteAgencyDialog({
               recordVerification: remote.recordUrl.startsWith("https:")
                 ? "tls-only"
                 : "operator-reviewed-local",
+              contextExtensionUri: invocationContext?.extensionUri ?? null,
+              scopeRef: invocationContext?.scopeRef ?? null,
             };
             await saveRemoteAgencyBinding(
               bindingFromRemoteAgencyProxies(
@@ -196,7 +230,7 @@ export function RemoteAgencyDialog({
           continue;
         }
         const created = await createMutation.mutateAsync(
-          buildRemoteAgencyManagedAgentInput(remote),
+          buildRemoteAgencyManagedAgentInput(remote, invocationContext),
         );
         proxies.push({
           agentId: remote.id,
@@ -208,6 +242,8 @@ export function RemoteAgencyDialog({
           recordVerification: remote.recordUrl.startsWith("https:")
             ? "tls-only"
             : "operator-reviewed-local",
+          contextExtensionUri: invocationContext?.extensionUri ?? null,
+          scopeRef: invocationContext?.scopeRef ?? null,
         });
         await saveRemoteAgencyBinding(
           bindingFromRemoteAgencyProxies(
@@ -400,6 +436,28 @@ export function RemoteAgencyDialog({
                 </div>
               ))}
             </section>
+
+            {hasAgencyContext ? (
+              <label className="block space-y-2 text-sm font-medium">
+                Source work context
+                <select
+                  className="flex h-9 w-full rounded-lg border border-input/40 bg-background px-3 text-sm"
+                  onChange={(event) => setScopeRef(event.target.value)}
+                  value={scopeRef}
+                >
+                  <option value="">Organization only</option>
+                  {descriptor.scopes.map((scope) => (
+                    <option key={scope.id} value={scope.id}>
+                      {scope.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  Buzz forwards this source-issued reference. The remote runtime
+                  decides whether the selected agents may use it.
+                </span>
+              </label>
+            ) : null}
 
             <label className="block space-y-2 text-sm font-medium">
               Add to channel

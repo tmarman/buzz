@@ -180,14 +180,25 @@ pub struct RemoteAgencyAgent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RemoteAgencyScope {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub agent_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteAgencyDescriptor {
     pub source_url: String,
     pub agency_id: String,
     pub name: String,
     pub description: Option<String>,
     pub agents: Vec<RemoteAgencyAgent>,
+    pub scopes: Vec<RemoteAgencyScope>,
     pub protocols: Vec<String>,
     pub capabilities: Vec<String>,
+    pub extensions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -218,6 +229,10 @@ pub struct RemoteAgencyProxy {
     pub record_cid: Option<String>,
     #[serde(default)]
     pub record_verification: Option<String>,
+    #[serde(default)]
+    pub context_extension_uri: Option<String>,
+    #[serde(default)]
+    pub scope_ref: Option<String>,
 }
 
 fn text(value: Option<&Value>) -> Option<String> {
@@ -300,8 +315,13 @@ fn linked_urls(source: &Url, document: &Value) -> Vec<(String, String)> {
 fn relation_kind(value: Option<&Value>) -> Option<&'static str> {
     let classify = |relation: &str| {
         let relation = relation.trim_end_matches('/');
-        (relation.ends_with("agents") || relation.ends_with("agent-records"))
-            .then_some("agents")
+        if relation.ends_with("agents") || relation.ends_with("agent-records") {
+            Some("agents")
+        } else if relation == "spaces" {
+            Some("spaces")
+        } else {
+            None
+        }
     };
     match value {
         Some(Value::String(value)) => classify(value),
@@ -338,7 +358,7 @@ where
         let Some(values) = linked_collection_values(&linked_document, &kind) else {
             continue;
         };
-        if matches!(kind.as_str(), "agents" | "agent_records") {
+        if matches!(kind.as_str(), "agents" | "agent_records" | "spaces") {
             document[kind] = Value::Array(values.iter().take(MAX_ITEMS).cloned().collect());
         }
     }
@@ -441,6 +461,58 @@ fn parse_agent(source: &Url, value: &Value) -> Option<RemoteAgencyAgent> {
     })
 }
 
+fn absolute_reference(value: Option<&Value>) -> Option<String> {
+    let value = text(value)?;
+    (Url::parse(&value).is_ok()).then_some(value)
+}
+
+fn parse_scope(value: &Value) -> Option<RemoteAgencyScope> {
+    let scope_id = absolute_reference(value.get("id").or_else(|| value.get("identifier")))?;
+    let name = text(value.get("display_name"))
+        .or_else(|| text(value.get("displayName")))
+        .or_else(|| text(value.get("name")))
+        .unwrap_or_else(|| scope_id.clone());
+    let mut agent_ids = value
+        .get("members")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(MAX_ITEMS)
+        .filter_map(|member| {
+            id(member
+                .get("agent_id")
+                .or_else(|| member.get("agentId"))
+                .or_else(|| member.get("id")))
+        })
+        .collect::<Vec<_>>();
+    agent_ids.sort();
+    agent_ids.dedup();
+    Some(RemoteAgencyScope {
+        id: scope_id,
+        name,
+        description: text(value.get("description")),
+        agent_ids,
+    })
+}
+
+fn extension_uris(document: &Value, agency: &Value) -> Vec<String> {
+    let mut extensions = BTreeSet::new();
+    for object in [
+        document.get("extensions").and_then(Value::as_object),
+        agency.get("extensions").and_then(Value::as_object),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for uri in object.keys().take(MAX_ITEMS) {
+            if uri.len() <= MAX_TEXT_BYTES && Url::parse(uri).is_ok() {
+                extensions.insert(uri.clone());
+            }
+        }
+    }
+    extensions.into_iter().collect()
+}
+
 /// Validate a descriptor URL before any network request is made.
 pub fn validate_remote_agency_url(raw: &str) -> Result<Url, String> {
     let parsed = Url::parse(raw.trim()).map_err(|_| "Remote Agency URL is invalid".to_string())?;
@@ -504,6 +576,20 @@ pub fn parse_remote_agency_document(
                 .collect()
         })
         .unwrap_or_default();
+    let scopes = agency
+        .get("spaces")
+        .or_else(|| agency.get("scopes"))
+        .or_else(|| document.get("spaces"))
+        .or_else(|| document.get("scopes"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .take(MAX_ITEMS)
+                .filter_map(parse_scope)
+                .collect()
+        })
+        .unwrap_or_default();
     let protocols = strings(
         document
             .get("protocols")
@@ -520,8 +606,10 @@ pub fn parse_remote_agency_document(
         name,
         description: text(agency.get("description")),
         agents,
+        scopes,
         protocols,
         capabilities,
+        extensions: extension_uris(&document, agency),
     })
 }
 
@@ -710,11 +798,23 @@ pub fn save_remote_agency_binding(
         }) {
             return Err("Remote Agency binding has an invalid verification method".to_string());
         }
+        if proxy.context_extension_uri.as_deref().is_some_and(|value| {
+            absolute_reference(Some(&Value::String(value.to_string()))).is_none()
+        }) || proxy.scope_ref.as_deref().is_some_and(|value| {
+            absolute_reference(Some(&Value::String(value.to_string()))).is_none()
+        }) {
+            return Err("Remote Agency binding has an invalid context reference".to_string());
+        }
+        if proxy.scope_ref.is_some() && proxy.context_extension_uri.is_none() {
+            return Err(
+                "Remote Agency binding has a scope without a context extension".to_string(),
+            );
+        }
         validate_remote_agency_url(&proxy.record_url)?;
     }
-    binding
-        .proxies
-        .sort_by(|left, right| (&left.agent_id, &left.channel_id).cmp(&(&right.agent_id, &right.channel_id)));
+    binding.proxies.sort_by(|left, right| {
+        (&left.agent_id, &left.channel_id).cmp(&(&right.agent_id, &right.channel_id))
+    });
     binding.proxies.dedup_by(|left, right| {
         left.agent_id == right.agent_id && left.channel_id == right.channel_id
     });

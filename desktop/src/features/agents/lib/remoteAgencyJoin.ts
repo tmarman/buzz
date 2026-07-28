@@ -6,6 +6,32 @@ import type {
 } from "@/shared/api/remoteAgencyTypes";
 import type { CreateManagedAgentInput } from "@/shared/api/types";
 
+export const AGENCY_CONTEXT_EXTENSION_URI =
+  "https://voxelbox.com/specs/agency/extensions/context/v1";
+
+export type RemoteAgencyInvocationContext = {
+  extensionUri: string;
+  organizationRef: string;
+  scopeRef?: string;
+};
+
+function isAbsoluteUri(value: string): boolean {
+  try {
+    return Boolean(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+export function supportsAgencyContext(
+  descriptor: RemoteAgencyDescriptor,
+): boolean {
+  return (
+    descriptor.extensions.includes(AGENCY_CONTEXT_EXTENSION_URI) &&
+    isAbsoluteUri(descriptor.agencyId)
+  );
+}
+
 function normalizedLoopbackHost(hostname: string): string | null {
   const normalized = hostname
     .trim()
@@ -67,6 +93,7 @@ export function findRemoteAgencyBinding(
  */
 export function buildRemoteAgencyManagedAgentInput(
   agent: RemoteAgencyAgent,
+  context?: RemoteAgencyInvocationContext,
 ): CreateManagedAgentInput {
   if (!agent.recordUrl) {
     throw new Error(
@@ -75,6 +102,16 @@ export function buildRemoteAgencyManagedAgentInput(
   }
   if (!agent.a2aEndpoint) {
     throw new Error("Remote Agent does not advertise a reviewed A2A endpoint");
+  }
+  if (
+    context &&
+    (!isAbsoluteUri(context.extensionUri) ||
+      !isAbsoluteUri(context.organizationRef) ||
+      (context.scopeRef !== undefined && !isAbsoluteUri(context.scopeRef)))
+  ) {
+    throw new Error(
+      "Remote Agency invocation context must use absolute URI references",
+    );
   }
   return {
     name: agent.name,
@@ -86,6 +123,16 @@ export function buildRemoteAgencyManagedAgentInput(
     envVars: {
       BUZZ_A2A_AGENT_RECORD: agent.recordUrl,
       BUZZ_A2A_BEARER_ENDPOINT: agent.a2aEndpoint,
+      ...(context
+        ? {
+            BUZZ_A2A_EXTENSIONS_JSON: JSON.stringify({
+              [context.extensionUri]: {
+                organizationRef: context.organizationRef,
+                ...(context.scopeRef ? { scopeRef: context.scopeRef } : {}),
+              },
+            }),
+          }
+        : {}),
     },
     parallelism: 1,
     spawnAfterCreate: true,
