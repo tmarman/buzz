@@ -852,6 +852,26 @@ fn apply_model_provider_prompt_update(
     }
 }
 
+fn apply_managed_agent_name_update(
+    record: &mut crate::managed_agents::ManagedAgentRecord,
+    name_update: Option<String>,
+) -> bool {
+    let Some(name_update) = name_update else {
+        return false;
+    };
+    let trimmed = name_update.trim();
+    if trimmed.is_empty() || trimmed == record.name {
+        return false;
+    }
+
+    let display_name_mirrors_handle = record.display_name.as_deref() == Some(record.name.as_str());
+    record.name = trimmed.to_string();
+    if display_name_mirrors_handle {
+        record.display_name = Some(record.name.clone());
+    }
+    true
+}
+
 /// Update mutable fields on an existing managed agent record.
 ///
 /// Does NOT auto-restart the agent. Runtime config changes (system prompt,
@@ -883,14 +903,7 @@ pub async fn update_managed_agent(
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
 
-        let mut name_changed = false;
-        if let Some(name_update) = input.name {
-            let trimmed = name_update.trim().to_string();
-            if !trimmed.is_empty() && trimmed != record.name {
-                record.name = trimmed;
-                name_changed = true;
-            }
-        }
+        let name_changed = apply_managed_agent_name_update(record, input.name);
         apply_model_provider_prompt_update(
             record,
             input.model,
@@ -1002,7 +1015,10 @@ pub async fn update_managed_agent(
                 &record.relay_url,
                 &relay_ws_url_with_override(&state),
             );
-            let display_name = record.name.clone();
+            let display_name = record
+                .display_name
+                .clone()
+                .unwrap_or_else(|| record.name.clone());
             // Avatar fallback derives from the EFFECTIVE harness (persona-wins),
             // not the frozen snapshot, so an inherited harness picks the right
             // default avatar.
