@@ -203,7 +203,7 @@ fn parses_export_projection_aliases_and_relative_refs() {
 }
 
 #[test]
-fn resolves_only_standard_agent_manifest_relations_without_cross_origin() {
+fn resolves_only_supported_manifest_relations_without_cross_origin() {
     let json = br#"{
       "id":"agency.example",
       "links":[
@@ -220,11 +220,16 @@ fn resolves_only_standard_agent_manifest_relations_without_cross_origin() {
 }
 
 #[test]
-fn preview_ignores_unrecognized_context_links() {
+fn preview_collects_public_scopes_and_advertised_extensions() {
     let manifest: Value = serde_json::json!({
         "schema": "agency.remote/v1",
         "id": "urn:uuid:test-agency",
         "name": "Example Agency",
+        "extensions": {
+            "https://voxelbox.com/specs/agency/extensions/context/v1": {
+                "schema": "https://voxelbox.com/schemas/agency/v0.1/candidate/a2a-context-extension.schema.json"
+            }
+        },
         "links": [
             {"rel": "agents", "href": "/api/agency/agents"},
             {"rel": "https://example.com/agency/rel/one/v1", "href": "/one"},
@@ -237,12 +242,37 @@ fn preview_ignores_unrecognized_context_links() {
     });
     let source = Url::parse("http://127.0.0.1:1337/.well-known/agency.json").unwrap();
     let links = linked_urls(&source, &manifest);
-    assert_eq!(links.len(), 1);
-    let linked = vec![(
-        "agents".to_string(),
-        serde_json::json!({"schema":"agency.agents/v1","agency_id":"urn:uuid:test-agency","revision":"r1","agents":[]}),
-    )];
+    assert_eq!(links.len(), 2);
+    let linked = vec![
+        (
+            "agents".to_string(),
+            serde_json::json!({"schema":"agency.agents/v1","agency_id":"urn:uuid:test-agency","revision":"r1","agents":[]}),
+        ),
+        (
+            "spaces".to_string(),
+            serde_json::json!({
+                "schema":"agency.spaces/v1",
+                "agency_id":"urn:uuid:test-agency",
+                "revision":"r1",
+                "spaces":[{
+                    "id":"urn:uuid:test-space",
+                    "name":"example",
+                    "display_name":"Example",
+                    "description":"Example work context",
+                    "members":[{"agent_id":"urn:uuid:test-agent"}]
+                }]
+            }),
+        ),
+    ];
     let descriptor = parse_preview_document(source.as_str(), manifest, linked).unwrap();
     assert_eq!(descriptor.agency_id, "urn:uuid:test-agency");
     assert!(descriptor.agents.is_empty());
+    assert_eq!(
+        descriptor.extensions,
+        vec!["https://voxelbox.com/specs/agency/extensions/context/v1"]
+    );
+    assert_eq!(descriptor.scopes.len(), 1);
+    assert_eq!(descriptor.scopes[0].id, "urn:uuid:test-space");
+    assert_eq!(descriptor.scopes[0].name, "Example");
+    assert_eq!(descriptor.scopes[0].agent_ids, vec!["urn:uuid:test-agent"]);
 }

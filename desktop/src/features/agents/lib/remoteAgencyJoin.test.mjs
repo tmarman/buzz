@@ -7,6 +7,7 @@ import {
   findRemoteAgencyBinding,
   findRemoteAgencyProxy,
   joinableRemoteAgentIds,
+  supportsAgencyContext,
 } from "./remoteAgencyJoin.ts";
 
 const descriptor = {
@@ -16,6 +17,8 @@ const descriptor = {
   description: null,
   protocols: ["a2a"],
   capabilities: [],
+  extensions: [],
+  scopes: [],
   agents: [],
 };
 
@@ -45,6 +48,85 @@ test("builds the reviewed Remote Team adapter request without secrets", () => {
   assert.equal(input.avatarUrl, "https://example.com/agents/scout.png");
   assert.equal(input.parallelism, 1);
   assert.equal(input.startOnAppLaunch, true);
+});
+
+test("configures an advertised A2A extension without inventing host references", () => {
+  const input = buildRemoteAgencyManagedAgentInput(
+    {
+      id: "agent-1",
+      name: "Scout",
+      description: null,
+      avatarUrl: null,
+      recordUrl: "https://example.com/agents/scout.json",
+      recordRevision: "r1",
+      a2aEndpoint: "https://example.com/a2a/scout",
+      agentCardUrl: "https://example.com/a2a/card.json",
+      capabilities: [],
+    },
+    {
+      extensionUri: "https://voxelbox.com/specs/agency/extensions/context/v1",
+      organizationRef: "urn:uuid:agency-1",
+      scopeRef: "urn:uuid:project-1",
+    },
+  );
+  assert.deepEqual(JSON.parse(input.envVars.BUZZ_A2A_EXTENSIONS_JSON), {
+    "https://voxelbox.com/specs/agency/extensions/context/v1": {
+      organizationRef: "urn:uuid:agency-1",
+      scopeRef: "urn:uuid:project-1",
+    },
+  });
+  assert.equal(input.envVars.BUZZ_CHANNEL_REF, undefined);
+  assert.equal(input.envVars.BUZZ_THREAD_REF, undefined);
+});
+
+test("offers Agency Context only for an advertised profile with an absolute organization reference", () => {
+  assert.equal(
+    supportsAgencyContext({
+      ...descriptor,
+      agencyId: "urn:uuid:agency-1",
+      extensions: ["https://voxelbox.com/specs/agency/extensions/context/v1"],
+    }),
+    true,
+  );
+  assert.equal(
+    supportsAgencyContext({
+      ...descriptor,
+      agencyId: "agency.example",
+      extensions: ["https://voxelbox.com/specs/agency/extensions/context/v1"],
+    }),
+    false,
+  );
+});
+
+test("rejects non-URI Agency Context references", () => {
+  const agent = {
+    id: "agent-1",
+    name: "Scout",
+    description: null,
+    avatarUrl: null,
+    recordUrl: "https://example.com/agents/scout.json",
+    recordRevision: "r1",
+    a2aEndpoint: "https://example.com/a2a/scout",
+    agentCardUrl: null,
+    capabilities: [],
+  };
+  assert.throws(
+    () =>
+      buildRemoteAgencyManagedAgentInput(agent, {
+        extensionUri: "https://voxelbox.com/specs/agency/extensions/context/v1",
+        organizationRef: "agency.example",
+      }),
+    /absolute URI references/,
+  );
+  assert.throws(
+    () =>
+      buildRemoteAgencyManagedAgentInput(agent, {
+        extensionUri: "https://voxelbox.com/specs/agency/extensions/context/v1",
+        organizationRef: "urn:uuid:agency-1",
+        scopeRef: "project-1",
+      }),
+    /absolute URI references/,
+  );
 });
 
 test("refuses a participant without a reviewed record or endpoint", () => {

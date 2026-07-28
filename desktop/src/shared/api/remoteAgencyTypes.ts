@@ -10,14 +10,23 @@ export type RemoteAgencyAgent = {
   capabilities: string[];
 };
 
+export type RemoteAgencyScope = {
+  id: string;
+  name: string;
+  description: string | null;
+  agentIds: string[];
+};
+
 export type RemoteAgencyDescriptor = {
   sourceUrl: string;
   agencyId: string;
   name: string;
   description: string | null;
   agents: RemoteAgencyAgent[];
+  scopes: RemoteAgencyScope[];
   protocols: string[];
   capabilities: string[];
+  extensions: string[];
 };
 
 export type RemoteAgencyBinding = {
@@ -44,4 +53,6 @@ export type RemoteAgencyProxy = {
     | "domain-jwks"
     | "directory-sigstore"
     | null;
+  contextExtensionUri: string | null;
+  scopeRef: string | null;
 };

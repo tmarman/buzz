@@ -864,6 +864,13 @@ pub fn spawn_agent_child(
         command.env(key, value);
     }
     remote_adapter::apply_bearer_token(&mut command, remote_a2a_bearer_token);
+    remote_adapter::apply_extensions_json(
+        &mut command,
+        descriptor
+            .env
+            .get("BUZZ_A2A_EXTENSIONS_JSON")
+            .map(String::as_str),
+    );
     configure_runtime_cli(&mut command, runtime_meta);
 
     // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
