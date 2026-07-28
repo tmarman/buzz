@@ -141,8 +141,7 @@ fn parses_public_projection_and_drops_private_fields() {
       "spaces":[{"id":"s1","name":"Research","surfaces":[{"id":"board","name":"Board","type":"remote-defined","url":"https://example.com/board"}]}],
       "protocols":["a2a"]
     }"#;
-    let descriptor =
-        parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
+    let descriptor = parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
     assert_eq!(descriptor.agents[0].id, "a1");
     assert_eq!(
         descriptor.spaces[0].surfaces[0].surface_type.as_deref(),
@@ -155,9 +154,9 @@ fn parses_public_projection_and_drops_private_fields() {
 
 #[test]
 fn rejects_cross_origin_references() {
-    let json = br#"{"id":"agency","agents":[{"id":"a","agent_card_url":"https://evil.example/card"}]}"#;
-    let descriptor =
-        parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
+    let json =
+        br#"{"id":"agency","agents":[{"id":"a","agent_card_url":"https://evil.example/card"}]}"#;
+    let descriptor = parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
     assert!(descriptor.agents[0].agent_card_url.is_none());
 }
 
@@ -169,8 +168,7 @@ fn parses_collection_projection_shape() {
       "agents":[{"agent_id":"a1","name":"Scout","record":"https://example.com/agents/a1.json","a2a_endpoint":"https://example.com/a2a/scout"}],
       "spaces":[{"space_id":"s1","name":"Research","surfaces":[]}]
     }"#;
-    let descriptor =
-        parse_remote_agency_document("https://example.com/agents.json", json).unwrap();
+    let descriptor = parse_remote_agency_document("https://example.com/agents.json", json).unwrap();
     assert_eq!(descriptor.agency_id, "agency.example");
     assert_eq!(
         descriptor.agents[0].record_url.as_deref(),
@@ -195,8 +193,7 @@ fn selects_only_a_declared_jsonrpc_interface() {
         ]
       }]
     }"#;
-    let descriptor =
-        parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
+    let descriptor = parse_remote_agency_document("https://example.com/agency.json", json).unwrap();
     assert_eq!(
         descriptor.agents[0].a2a_endpoint.as_deref(),
         Some("https://example.com/a2a/jsonrpc")

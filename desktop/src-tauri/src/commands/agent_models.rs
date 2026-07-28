@@ -5,6 +5,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, State};
 
 use super::agent_model_process::run_agent_models_command;
+use super::agent_name_update::apply_managed_agent_name_update;
 // The map-only lookup is reached solely from the base-URL helpers that exist for
 // their unit tests; discovery itself always goes through the process-env variant.
 #[cfg(test)]
@@ -850,41 +851,6 @@ fn apply_model_provider_prompt_update(
     if let Some(prompt_update) = system_prompt {
         record.system_prompt = prompt_update;
     }
-}
-
-fn apply_managed_agent_name_update(
-    record: &mut crate::managed_agents::ManagedAgentRecord,
-    name_update: Option<String>,
-) -> bool {
-    let Some(name_update) = name_update else {
-        return false;
-    };
-    let trimmed = name_update.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    let display_name_mirrors_handle = record.display_name.as_deref() == Some(record.name.as_str());
-    let display_name_is_legacy_remote_label = record
-        .display_name
-        .as_deref()
-        .and_then(|display_name| {
-            display_name.strip_prefix("Remote Agency · proxied by Buzz · ")
-        })
-        .is_some_and(|handle| handle.eq_ignore_ascii_case(record.name.trim()));
-    if trimmed == record.name {
-        if display_name_is_legacy_remote_label {
-            record.display_name = Some(trimmed.to_string());
-            return true;
-        }
-        return false;
-    }
-
-    record.name = trimmed.to_string();
-    if display_name_mirrors_handle || display_name_is_legacy_remote_label {
-        record.display_name = Some(record.name.clone());
-    }
-    true
 }
 
 /// Update mutable fields on an existing managed agent record.
