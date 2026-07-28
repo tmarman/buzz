@@ -916,7 +916,6 @@ mod tests {
         assert!(verified_name(GetVerificationInfoResponse {
             verified: false,
             error_message: Some("name proof failed".to_string()),
-            ..Default::default()
         })
         .is_err());
         assert_eq!(
