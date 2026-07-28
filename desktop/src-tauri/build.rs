@@ -9,7 +9,7 @@ fn main() {
     // The source files are vendored under proto/agntcy and the generated
     // client is produced at build time; no Directory CLI or REST shim is used.
     let proto_root = std::path::Path::new("proto");
-    let _ = std::env::set_var(
+    std::env::set_var(
         "PROTOC",
         protoc_bin_vendored::protoc_bin_path()
             .expect("protoc binary")
