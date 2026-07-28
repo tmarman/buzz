@@ -21,6 +21,7 @@ import { TeamDeleteDialog } from "./TeamDeleteDialog";
 import { TeamDialog } from "./TeamDialog";
 import { TeamsSection } from "./TeamsSection";
 import { UnifiedAgentsSection } from "./UnifiedAgentsSection";
+import { RemoteAgencyDialog } from "./RemoteAgencyDialog";
 import { useManagedAgentActions } from "./useManagedAgentActions";
 import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
@@ -31,6 +32,8 @@ import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
+import { listRemoteAgencies } from "@/shared/api/tauri";
+import type { RemoteAgencyBinding } from "@/shared/api/remoteAgencyTypes";
 
 export function AgentsView() {
   const { openPersonaProfilePanel, openProfilePanel } = useProfilePanel();
@@ -45,6 +48,13 @@ export function AgentsView() {
   // Exclusivity: create never sets `personaDialogState` (edit/dup/import do),
   // so the create-mode and definition-edit AgentDialog mounts never coexist.
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
+  const [isRemoteTeamDialogOpen, setIsRemoteTeamDialogOpen] =
+    React.useState(false);
+  const [remoteBindings, setRemoteBindings] = React.useState<
+    RemoteAgencyBinding[]
+  >([]);
+  const [remoteBindingsError, setRemoteBindingsError] =
+    React.useState<Error | null>(null);
 
   function openUnifiedCreate() {
     personas.prepareCreate();
@@ -59,6 +69,28 @@ export function AgentsView() {
       refetchManagedAgents: agents.refetchManagedAgents,
       refetchRelayAgents: agents.refetchRelayAgents,
     },
+  );
+  const refreshRemoteBindings = React.useCallback(async () => {
+    try {
+      setRemoteBindings(await listRemoteAgencies());
+      setRemoteBindingsError(null);
+    } catch (cause) {
+      setRemoteBindingsError(
+        cause instanceof Error ? cause : new Error(String(cause)),
+      );
+    }
+  }, []);
+  React.useEffect(() => {
+    void refreshRemoteBindings();
+  }, [refreshRemoteBindings]);
+  const remoteAgentPubkeys = React.useMemo(
+    () =>
+      new Set(
+        remoteBindings.flatMap((binding) =>
+          binding.proxies.map((proxy) => proxy.pubkey),
+        ),
+      ),
+    [remoteBindings],
   );
 
   const isActionPending =
@@ -145,6 +177,7 @@ export function AgentsView() {
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
               agents={agents.managedAgents}
+              remoteAgentPubkeys={remoteAgentPubkeys}
               agentsError={
                 agents.managedAgentsQuery.error instanceof Error
                   ? agents.managedAgentsQuery.error
@@ -223,7 +256,11 @@ export function AgentsView() {
               onImport={() => {
                 teamImportInputRef.current?.click();
               }}
+              onAddRemote={() => setIsRemoteTeamDialogOpen(true)}
               personas={personas.libraryPersonas}
+              remoteAgents={agents.managedAgents}
+              remoteBindings={remoteBindings}
+              remoteError={remoteBindingsError}
               teams={teamActions.teams}
             />
           </div>
@@ -234,6 +271,16 @@ export function AgentsView() {
         onOpenChange={setIsAiDefaultsOpen}
         open={isAiDefaultsOpen}
         returnFocusRef={aiDefaultsTriggerRef}
+      />
+      <RemoteAgencyDialog
+        onBindingChange={() => {
+          void Promise.all([
+            refreshRemoteBindings(),
+            agents.refetchManagedAgents(),
+          ]);
+        }}
+        onOpenChange={setIsRemoteTeamDialogOpen}
+        open={isRemoteTeamDialogOpen}
       />
 
       {isCreateDialogOpen ? (

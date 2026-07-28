@@ -99,6 +99,8 @@ fn persona_drift_state(
     (out_of_date, false)
 }
 
+mod remote_adapter;
+
 /// Resolve the runtime-pair key this record maps to for the active
 /// workspace: always the active workspace relay (the legacy per-record relay
 /// pin is ignored — see `effective_agent_relay_url`). Returns `None` for
@@ -506,6 +508,7 @@ pub fn spawn_agent_child(
             })?;
     let effective_command = &descriptor.command;
     let agent_args = &descriptor.args;
+    let remote_a2a_bearer_token = remote_adapter::load_bearer_token(&descriptor)?;
 
     let log_path = super::managed_agent_runtime_log_path(app, &runtime_key)?;
     append_log_marker(
@@ -860,6 +863,7 @@ pub fn spawn_agent_child(
     for (key, value) in &descriptor.env {
         command.env(key, value);
     }
+    remote_adapter::apply_bearer_token(&mut command, remote_a2a_bearer_token);
     configure_runtime_cli(&mut command, runtime_meta);
 
     // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
