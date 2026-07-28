@@ -119,11 +119,11 @@ fn bearer_token_lookup_preserves_only_synchronized_loopback_aliases() {
 #[test]
 fn legacy_proxy_bindings_default_new_provenance_fields() {
     let proxy: RemoteAgencyProxy = serde_json::from_value(serde_json::json!({
-        "agentId": "smithy",
+        "agentId": "example-agent",
         "pubkey": "0".repeat(64),
         "channelId": "channel-1",
         "spaceId": "space-1",
-        "recordUrl": "https://agency.example/agents/smithy.json",
+        "recordUrl": "https://agency.example/agents/example-agent.json",
         "recordRevision": "r1"
     }))
     .expect("legacy proxy remains readable");
