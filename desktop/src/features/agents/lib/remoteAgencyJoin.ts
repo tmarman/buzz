@@ -110,7 +110,7 @@ export function buildRemoteAgencyManagedAgentInput(
       (context.scopeRef !== undefined && !isAbsoluteUri(context.scopeRef)))
   ) {
     throw new Error(
-      "Remote Agency invocation context must use absolute URI references",
+      "Remote Team invocation context must use absolute URI references",
     );
   }
   return {

@@ -803,12 +803,10 @@ pub fn save_remote_agency_binding(
         }) || proxy.scope_ref.as_deref().is_some_and(|value| {
             absolute_reference(Some(&Value::String(value.to_string()))).is_none()
         }) {
-            return Err("Remote Agency binding has an invalid context reference".to_string());
+            return Err("Remote Team binding has an invalid context reference".to_string());
         }
         if proxy.scope_ref.is_some() && proxy.context_extension_uri.is_none() {
-            return Err(
-                "Remote Agency binding has a scope without a context extension".to_string(),
-            );
+            return Err("Remote Team binding has a scope without a context extension".to_string());
         }
         validate_remote_agency_url(&proxy.record_url)?;
     }
