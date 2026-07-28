@@ -117,6 +117,21 @@ fn bearer_token_lookup_preserves_only_synchronized_loopback_aliases() {
 }
 
 #[test]
+fn legacy_proxy_bindings_default_new_provenance_fields() {
+    let proxy: RemoteAgencyProxy = serde_json::from_value(serde_json::json!({
+        "agentId": "smithy",
+        "pubkey": "0".repeat(64),
+        "channelId": "channel-1",
+        "spaceId": "space-1",
+        "recordUrl": "https://agency.example/agents/smithy.json",
+        "recordRevision": "r1"
+    }))
+    .expect("legacy proxy remains readable");
+    assert_eq!(proxy.record_cid, None);
+    assert_eq!(proxy.record_verification, None);
+}
+
+#[test]
 fn parses_public_projection_and_drops_private_fields() {
     let json = br#"{
       "id":"agency.example",
@@ -193,7 +208,7 @@ fn parses_export_projection_aliases_and_relative_refs() {
     let json = br#"{
       "agency_id":"agency.example",
       "revision":"r2",
-      "agents":[{"agent_id":"a1","display_name":"Scout","oasf_record_url":"/agency/agents/a1.json","a2a_endpoint":"/a2a/scout"}],
+      "agents":[{"agent_id":"a1","name":"scout","display_name":"Scout","oasf_record_url":"/agency/agents/a1.json","a2a_endpoint":"/a2a/scout"}],
       "spaces":[{"space_id":"s1","name":"Research","surfaces":[]}]
     }"#;
     let descriptor =
@@ -206,6 +221,7 @@ fn parses_export_projection_aliases_and_relative_refs() {
         descriptor.agents[0].a2a_endpoint.as_deref(),
         Some("https://example.com/a2a/scout")
     );
+    assert_eq!(descriptor.agents[0].name, "Scout");
 }
 
 #[test]

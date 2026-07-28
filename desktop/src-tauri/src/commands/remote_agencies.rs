@@ -226,6 +226,10 @@ pub struct RemoteAgencyProxy {
     pub space_id: Option<String>,
     pub record_url: String,
     pub record_revision: Option<String>,
+    #[serde(default)]
+    pub record_cid: Option<String>,
+    #[serde(default)]
+    pub record_verification: Option<String>,
 }
 
 fn text(value: Option<&Value>) -> Option<String> {
@@ -397,9 +401,9 @@ fn first_jsonrpc_reference(source: &Url, value: Option<&Value>) -> Option<String
 fn parse_agent(source: &Url, value: &Value) -> Option<RemoteAgencyAgent> {
     let agent_id = id(value.get("id").or_else(|| value.get("identifier")))
         .or_else(|| id(value.get("agent_id")))?;
-    let name = text(value.get("name"))
-        .or_else(|| text(value.get("display_name")))
+    let name = text(value.get("display_name"))
         .or_else(|| text(value.get("displayName")))
+        .or_else(|| text(value.get("name")))
         .unwrap_or_else(|| agent_id.clone());
     let card = value
         .get("agent_card_url")
@@ -760,6 +764,21 @@ pub fn save_remote_agency_binding(
             if space_id.is_empty() || space_id.len() > 128 {
                 return Err("Remote Agency binding has an invalid Space id".to_string());
             }
+        }
+        if proxy
+            .record_cid
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.len() > 256)
+        {
+            return Err("Remote Agency binding has an invalid record CID".to_string());
+        }
+        if proxy.record_verification.as_deref().is_some_and(|value| {
+            !matches!(
+                value,
+                "operator-reviewed-local" | "tls-only" | "domain-jwks" | "directory-sigstore"
+            )
+        }) {
+            return Err("Remote Agency binding has an invalid verification method".to_string());
         }
         validate_remote_agency_url(&proxy.record_url)?;
     }

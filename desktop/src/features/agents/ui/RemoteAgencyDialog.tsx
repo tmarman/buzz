@@ -179,6 +179,10 @@ export function RemoteAgencyDialog({
               ...existingProxy,
               recordUrl: remote.recordUrl,
               recordRevision: remote.recordRevision,
+              recordCid: null,
+              recordVerification: remote.recordUrl.startsWith("https:")
+                ? "tls-only"
+                : "operator-reviewed-local",
             };
             await saveRemoteAgencyBinding(
               bindingFromRemoteAgencyProxies(
@@ -212,6 +216,10 @@ export function RemoteAgencyDialog({
           spaceId: selectedSpaceId ?? null,
           recordUrl: remote.recordUrl,
           recordRevision: remote.recordRevision,
+          recordCid: null,
+          recordVerification: remote.recordUrl.startsWith("https:")
+            ? "tls-only"
+            : "operator-reviewed-local",
         });
         await saveRemoteAgencyBinding(
           bindingFromRemoteAgencyProxies(

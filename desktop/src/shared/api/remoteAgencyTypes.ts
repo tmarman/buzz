@@ -51,4 +51,11 @@ export type RemoteAgencyProxy = {
   spaceId: string | null;
   recordUrl: string;
   recordRevision: string | null;
+  recordCid: string | null;
+  recordVerification:
+    | "operator-reviewed-local"
+    | "tls-only"
+    | "domain-jwks"
+    | "directory-sigstore"
+    | null;
 };

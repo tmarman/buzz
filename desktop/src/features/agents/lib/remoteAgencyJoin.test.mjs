@@ -42,7 +42,7 @@ test("builds the reviewed Remote Agency adapter request without secrets", () => 
     "https://example.com/a2a/scout",
   );
   assert.equal(input.envVars.BUZZ_A2A_CHANNEL_REF, "channel-1");
-  assert.equal(input.name, "Remote Agency · proxied by Buzz · Scout");
+  assert.equal(input.name, "Scout");
   assert.equal(input.parallelism, 1);
   assert.equal(input.startOnAppLaunch, true);
 });

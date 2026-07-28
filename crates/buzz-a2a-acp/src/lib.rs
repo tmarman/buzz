@@ -14,18 +14,19 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     net::{IpAddr, SocketAddr},
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use url::Url;
+use uuid::Uuid;
 
 const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ACP_LINE_BYTES: usize = 1024 * 1024;
 const DEFAULT_TASK_POLL_SECS: u64 = 7_200;
-const TASK_POLL_INTERVAL_SECS: u64 = 1;
+const TASK_POLL_BACKOFF_SECS: [u64; 4] = [1, 5, 15, 30];
 
 /// Configuration supplied by Buzz's BYOH subprocess definition.
 #[derive(Debug, Clone)]
@@ -44,6 +45,8 @@ pub struct AdapterConfig {
     pub channel_ref: Option<String>,
     /// Optional stable Agent reference projected into A2A metadata.
     pub agent_ref: Option<String>,
+    /// Optional caller-supplied A2A conversation context identifier.
+    pub context_id: Option<String>,
     /// Maximum time to wait for an asynchronous A2A task.
     pub task_poll_secs: u64,
 }
@@ -77,6 +80,10 @@ struct Cli {
     /// Optional stable Agent reference to include in A2A request metadata.
     #[arg(long, env = "BUZZ_A2A_AGENT_REF")]
     agent_ref: Option<String>,
+
+    /// Optional stable A2A conversation context identifier.
+    #[arg(long, env = "BUZZ_A2A_CONTEXT_ID")]
+    context_id: Option<String>,
 
     /// Maximum time to wait for an asynchronous A2A task.
     #[arg(
@@ -140,6 +147,53 @@ struct AgentRecord {
     modules: Vec<OasfModule>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RecordSource {
+    LocalPath(PathBuf),
+    HttpUrl(Url),
+}
+
+impl RecordSource {
+    fn parse(source: &str) -> Result<Self, AdapterError> {
+        if source.trim().is_empty() {
+            return Err(AdapterError::EmptyRecord);
+        }
+        if let Ok(url) = Url::parse(source) {
+            if matches!(url.scheme(), "http" | "https") {
+                validate_http_url(source)
+                    .map_err(|_| AdapterError::InvalidSource(source.to_owned()))?;
+                return Ok(Self::HttpUrl(url));
+            }
+            if source.contains("://") {
+                return Err(AdapterError::InvalidSource(source.to_owned()));
+            }
+        }
+        Ok(Self::LocalPath(PathBuf::from(source)))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordVerification {
+    OperatorReviewedLocal,
+    TlsOnly,
+}
+
+impl RecordVerification {
+    fn label(self) -> &'static str {
+        match self {
+            Self::OperatorReviewedLocal => "operator-reviewed-local",
+            Self::TlsOnly => "tls-only",
+        }
+    }
+}
+
+struct ResolvedRecord {
+    record: AgentRecord,
+    base: Option<Url>,
+    content_digest: String,
+    verification: RecordVerification,
+}
+
 #[derive(Debug, Deserialize)]
 struct OasfModule {
     #[serde(default)]
@@ -165,7 +219,7 @@ struct Descriptor {
     #[serde(default)]
     digest: Option<String>,
     #[serde(default, rename = "media_type")]
-    _media_type: Option<String>,
+    media_type: Option<String>,
     #[serde(default)]
     size: Option<u64>,
     #[serde(default)]
@@ -179,19 +233,19 @@ struct Descriptor {
 #[derive(Debug, Clone, Deserialize)]
 /// Public A2A Agent Card fields used to select an invocation interface.
 pub struct AgentCard {
-    /// Stable agent identifier, when advertised.
-    #[serde(default)]
-    pub id: Option<String>,
+    /// Non-standard identifier used only by the vendor compatibility path.
+    #[serde(default, rename = "id")]
+    pub vendor_id: Option<String>,
     /// Human-readable name, when advertised.
     #[serde(default)]
     pub name: Option<String>,
     /// Human-readable description, when advertised.
     #[serde(default)]
     pub description: Option<String>,
-    /// Legacy card endpoint alias.
+    /// A2A 0.3 card endpoint.
     #[serde(default)]
     pub url: Option<String>,
-    /// Legacy endpoint field used by the compatibility path.
+    /// Non-standard endpoint field used by the vendor compatibility path.
     #[serde(default, rename = "serviceEndpoint")]
     pub service_endpoint: Option<String>,
     /// Current A2A interface declarations.
@@ -220,14 +274,29 @@ pub enum ProtocolMode {
         endpoint: String,
         protocol_version: Option<String>,
     },
-    /// Compatibility with deployed pre-1.0 card and method names.
-    LegacyServiceEndpoint { endpoint: String },
+    /// Compatibility with a deployed vendor card and method shape.
+    VendorServiceEndpoint { endpoint: String },
 }
 
 impl ProtocolMode {
     fn endpoint(&self) -> &str {
         match self {
-            Self::JsonRpc { endpoint, .. } | Self::LegacyServiceEndpoint { endpoint } => endpoint,
+            Self::JsonRpc { endpoint, .. } | Self::VendorServiceEndpoint { endpoint } => endpoint,
+        }
+    }
+
+    fn a2a_version(&self) -> Option<&'static str> {
+        match self {
+            Self::JsonRpc {
+                protocol_version, ..
+            } if protocol_version
+                .as_deref()
+                .is_some_and(|version| version.starts_with("1.")) =>
+            {
+                Some("1.0")
+            }
+            Self::JsonRpc { .. } => Some("0.3"),
+            Self::VendorServiceEndpoint { .. } => None,
         }
     }
 
@@ -251,7 +320,7 @@ impl ProtocolMode {
                     "message/send"
                 }
             }
-            Self::LegacyServiceEndpoint { .. } => {
+            Self::VendorServiceEndpoint { .. } => {
                 if task {
                     "agent/getTask"
                 } else {
@@ -496,8 +565,13 @@ async fn read_source(
     Ok(body)
 }
 
-async fn load_record(source: &str) -> Result<(AgentRecord, Option<Url>), AdapterError> {
-    let bytes = read_source(source, "Agent Record", MAX_RECORD_BYTES).await?;
+async fn load_record(source: &str) -> Result<ResolvedRecord, AdapterError> {
+    let source = RecordSource::parse(source)?;
+    let source_text = match &source {
+        RecordSource::LocalPath(path) => path.to_string_lossy().into_owned(),
+        RecordSource::HttpUrl(url) => url.to_string(),
+    };
+    let bytes = read_source(&source_text, "Agent Record", MAX_RECORD_BYTES).await?;
     let record = if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
         let mut records: Vec<AgentRecord> =
             serde_json::from_slice(&bytes).map_err(|source| AdapterError::Decode {
@@ -519,10 +593,19 @@ async fn load_record(source: &str) -> Result<(AgentRecord, Option<Url>), Adapter
             source,
         })?
     };
-    let record_url = Url::parse(source)
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https"));
-    Ok((record, record_url))
+    let (base, verification) = match source {
+        RecordSource::LocalPath(_) => (None, RecordVerification::OperatorReviewedLocal),
+        RecordSource::HttpUrl(url) if url.scheme() == "https" => {
+            (Some(url), RecordVerification::TlsOnly)
+        }
+        RecordSource::HttpUrl(url) => (Some(url), RecordVerification::OperatorReviewedLocal),
+    };
+    Ok(ResolvedRecord {
+        record,
+        base,
+        content_digest: format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+        verification,
+    })
 }
 
 fn descriptor_from_raw(value: &RawValue) -> Result<Descriptor, AdapterError> {
@@ -546,29 +629,31 @@ fn descriptor_from_raw(value: &RawValue) -> Result<Descriptor, AdapterError> {
 }
 
 fn verify_descriptor(descriptor: &Descriptor, bytes: &[u8]) -> Result<(), AdapterError> {
-    if let Some(size) = descriptor.size {
-        if size != bytes.len() as u64 {
-            return Err(AdapterError::InvalidArtifact(format!(
-                "descriptor size {size} does not match {}",
-                bytes.len()
-            )));
-        }
+    let size = descriptor.size.ok_or_else(|| {
+        AdapterError::InvalidArtifact("OASF artifact descriptor requires size".into())
+    })?;
+    if size != bytes.len() as u64 {
+        return Err(AdapterError::InvalidArtifact(format!(
+            "descriptor size {size} does not match {}",
+            bytes.len()
+        )));
     }
-    if let Some(digest) = descriptor.digest.as_deref() {
-        let Some(expected) = digest
-            .strip_prefix("sha256:")
-            .or_else(|| digest.strip_prefix("sha256-"))
-        else {
-            return Err(AdapterError::InvalidArtifact(format!(
-                "unsupported digest {digest:?}; expected sha256:<hex>"
-            )));
-        };
-        let actual = hex::encode(Sha256::digest(bytes));
-        if !actual.eq_ignore_ascii_case(expected) {
-            return Err(AdapterError::InvalidArtifact(format!(
-                "sha256 digest mismatch: expected {expected}, got {actual}"
-            )));
-        }
+    let digest = descriptor.digest.as_deref().ok_or_else(|| {
+        AdapterError::InvalidArtifact("OASF artifact descriptor requires digest".into())
+    })?;
+    let Some(expected) = digest
+        .strip_prefix("sha256:")
+        .or_else(|| digest.strip_prefix("sha256-"))
+    else {
+        return Err(AdapterError::InvalidArtifact(format!(
+            "unsupported digest {digest:?}; expected sha256:<hex>"
+        )));
+    };
+    let actual = hex::encode(Sha256::digest(bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(AdapterError::InvalidArtifact(format!(
+            "sha256 digest mismatch: expected {expected}, got {actual}"
+        )));
     }
     Ok(())
 }
@@ -577,12 +662,13 @@ async fn descriptor_bytes(
     descriptor: &Descriptor,
     record_url: Option<&Url>,
 ) -> Result<Vec<u8>, AdapterError> {
-    if let Some(media_type) = descriptor._media_type.as_deref() {
-        if !media_type.to_ascii_lowercase().contains("json") {
-            return Err(AdapterError::InvalidArtifact(format!(
-                "A2A artifact media type must be JSON, got {media_type:?}"
-            )));
-        }
+    let media_type = descriptor.media_type.as_deref().ok_or_else(|| {
+        AdapterError::InvalidArtifact("OASF artifact descriptor requires media_type".into())
+    })?;
+    if !media_type.to_ascii_lowercase().contains("json") {
+        return Err(AdapterError::InvalidArtifact(format!(
+            "A2A artifact media type must be JSON, got {media_type:?}"
+        )));
     }
     if let Some(value) = descriptor.json.as_ref() {
         let bytes = value.get().as_bytes().to_vec();
@@ -691,11 +777,30 @@ pub fn select_protocol_mode(card: &AgentCard) -> Result<ProtocolMode, AdapterErr
             });
         }
     }
-    if let Some(endpoint) = card.service_endpoint.clone().or_else(|| card.url.clone()) {
+    if let Some(endpoint) = card.service_endpoint.clone() {
         validate_http_url(&endpoint)?;
-        return Ok(ProtocolMode::LegacyServiceEndpoint { endpoint });
+        return Ok(ProtocolMode::VendorServiceEndpoint { endpoint });
+    }
+    if let Some(endpoint) = card.url.clone() {
+        validate_http_url(&endpoint)?;
+        return Ok(ProtocolMode::JsonRpc {
+            endpoint,
+            protocol_version: Some("0.3".into()),
+        });
     }
     Err(AdapterError::MissingEndpoint)
+}
+
+fn protocol_request(
+    client: &Client,
+    mode: &ProtocolMode,
+    endpoint: &str,
+) -> reqwest::RequestBuilder {
+    let request = client.post(endpoint);
+    match mode.a2a_version() {
+        Some(version) => request.header("A2A-Version", version),
+        None => request,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -790,13 +895,14 @@ async fn invoke(
     let id = REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let payload = request_payload(
         &resolved.mode,
-        resolved.card.id.as_deref(),
+        resolved.card.vendor_id.as_deref(),
         id,
         session_id,
         metadata,
         text,
     );
-    let mut request = client.post(resolved.mode.endpoint()).json(&payload);
+    let mut request =
+        protocol_request(&client, &resolved.mode, resolved.mode.endpoint()).json(&payload);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
@@ -838,6 +944,7 @@ async fn invoke(
                 task_id,
                 metadata,
                 task_poll_secs,
+                &client,
             )
             .await;
         }
@@ -857,14 +964,26 @@ async fn poll_task(
     task_id: &str,
     metadata: Option<&Value>,
     task_poll_secs: u64,
+    client: &Client,
 ) -> Result<String, AdapterError> {
     let started = std::time::Instant::now();
-    while started.elapsed() < std::time::Duration::from_secs(task_poll_secs) {
-        tokio::time::sleep(std::time::Duration::from_secs(TASK_POLL_INTERVAL_SECS)).await;
+    let timeout = std::time::Duration::from_secs(task_poll_secs);
+    let mut poll_attempt = 0usize;
+    while started.elapsed() < timeout {
+        let remaining = timeout.saturating_sub(started.elapsed());
+        let delay = std::time::Duration::from_secs(
+            TASK_POLL_BACKOFF_SECS[poll_attempt.min(TASK_POLL_BACKOFF_SECS.len() - 1)],
+        )
+        .min(remaining);
+        tokio::time::sleep(delay).await;
+        poll_attempt = poll_attempt.saturating_add(1);
+        if started.elapsed() >= timeout {
+            break;
+        }
         let id = REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let mut params = match resolved.mode {
             ProtocolMode::JsonRpc { .. } => json!({ "id": task_id }),
-            ProtocolMode::LegacyServiceEndpoint { .. } => json!({ "taskId": task_id }),
+            ProtocolMode::VendorServiceEndpoint { .. } => json!({ "taskId": task_id }),
         };
         if let Some(metadata) = metadata {
             params["metadata"] = metadata.clone();
@@ -876,11 +995,8 @@ async fn poll_task(
             "params": params,
         });
         validate_endpoint_binding(token, token_endpoint, resolved.mode.endpoint())?;
-        let endpoint = Url::parse(resolved.mode.endpoint())
-            .map_err(|_| AdapterError::UnsafeEndpoint(resolved.mode.endpoint().to_owned()))?;
-        let addresses = resolve_network_url(&endpoint).await?;
-        let client = pinned_http_client(&endpoint, &addresses)?;
-        let mut request = client.post(resolved.mode.endpoint()).json(&payload);
+        let mut request =
+            protocol_request(client, &resolved.mode, resolved.mode.endpoint()).json(&payload);
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
@@ -984,14 +1100,12 @@ fn request_payload(
         {
             json!({
                 "message": { "messageId": format!("buzz-{id}"), "role": "ROLE_USER", "contextId": session_id, "parts": [{ "text": text }] },
-                "contextId": session_id,
             })
         }
         ProtocolMode::JsonRpc { .. } => json!({
             "message": { "messageId": format!("buzz-{id}"), "role": "user", "contextId": session_id, "parts": [{ "kind": "text", "text": text }] },
-            "contextId": session_id,
         }),
-        ProtocolMode::LegacyServiceEndpoint { .. } => json!({
+        ProtocolMode::VendorServiceEndpoint { .. } => json!({
             "agentId": agent_id,
             "message": { "role": "user", "parts": [{ "type": "text", "text": text }] },
             "contextId": session_id,
@@ -1038,6 +1152,7 @@ fn handle_acp_message(
     message: &Value,
     sessions: &mut HashSet<String>,
     agent_name: &str,
+    configured_context_id: Option<&str>,
 ) -> Result<Option<AcpAction>, AdapterError> {
     let method = message.get("method").and_then(Value::as_str);
     if method == Some("session/cancel") {
@@ -1067,7 +1182,9 @@ fn handle_acp_message(
             }
         })))),
         Some("session/new") => {
-            let session_id = format!("a2a-{}", REQUEST_ID.fetch_add(1, Ordering::Relaxed));
+            let session_id = configured_context_id
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("a2a-{}", Uuid::new_v4()));
             sessions.insert(session_id.clone());
             Ok(Some(AcpAction::Response(json!({
                 "jsonrpc": "2.0",
@@ -1141,8 +1258,13 @@ enum LoopEvent {
 
 /// Run the adapter over ACP JSON-RPC lines on stdin/stdout.
 pub async fn run(config: AdapterConfig) -> Result<(), AdapterError> {
-    let (record, record_url) = load_record(&config.record).await?;
-    let (resolved, source) = resolve_card(record, record_url.as_ref()).await?;
+    let record = load_record(&config.record).await?;
+    eprintln!(
+        "buzz-a2a-acp: resolved Agent Record {} ({})",
+        record.content_digest,
+        record.verification.label()
+    );
+    let (resolved, source) = resolve_card(record.record, record.base.as_ref()).await?;
     if source == CardSource::DeprecatedCardData {
         eprintln!(
             "buzz-a2a-acp: using deprecated OASF integration/a2a data.card_data compatibility path"
@@ -1204,6 +1326,7 @@ pub async fn run(config: AdapterConfig) -> Result<(), AdapterError> {
                     &message,
                     &mut sessions,
                     resolved.card.name.as_deref().unwrap_or("remote-a2a-agent"),
+                    config.context_id.as_deref(),
                 ) {
                     Ok(action) => action,
                     Err(error) => {
@@ -1420,6 +1543,7 @@ pub fn run_cli() -> Result<(), String> {
             space_ref: args.space_ref,
             channel_ref: args.channel_ref,
             agent_ref: args.agent_ref,
+            context_id: args.context_id,
             task_poll_secs: args.task_poll_secs,
         }))
         .map_err(|error| error.to_string())
@@ -1439,7 +1563,7 @@ mod tests {
         let card = card("http://127.0.0.1:1337/a2a");
         let bytes = serde_json::to_vec(&card).expect("test card serializes");
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
-        let record = json!({ "name": "Example Agent", "schema_version": "1.0.0", "modules": [{ "name": "integration/a2a", "id": 203, "artifact": { "json": card, "digest": digest, "size": bytes.len() } }] });
+        let record = json!({ "name": "Example Agent", "schema_version": "1.0.0", "modules": [{ "name": "integration/a2a", "id": 203, "artifact": { "json": card, "digest": digest, "media_type": "application/a2a-agent-card+json", "size": bytes.len() } }] });
         let path = std::env::temp_dir().join(format!(
             "buzz-a2a-record-{}-{}.json",
             std::process::id(),
@@ -1453,14 +1577,13 @@ mod tests {
         let loaded = load_record(path.to_str().expect("temp path is utf8"))
             .await
             .expect("load record");
-        let (record, record_url) = loaded;
-        let (resolved, source) = resolve_card(record, record_url.as_ref())
+        let (resolved, source) = resolve_card(loaded.record, loaded.base.as_ref())
             .await
             .expect("resolve card");
         assert_eq!(source, CardSource::Artifact);
         assert_eq!(
             resolved.mode,
-            ProtocolMode::LegacyServiceEndpoint {
+            ProtocolMode::VendorServiceEndpoint {
                 endpoint: "http://127.0.0.1:1337/a2a".into()
             }
         );
@@ -1475,7 +1598,7 @@ mod tests {
             hex::encode(Sha256::digest(raw_card.as_bytes()))
         );
         let record = format!(
-            r#"[{{"name":"Example Agent","schema_version":"1.0.0","modules":[{{"name":"integration/a2a","id":203,"artifact":{{"json":{raw_card},"digest":"{digest}","size":{}}}}}]}}]"#,
+            r#"[{{"name":"Example Agent","schema_version":"1.0.0","modules":[{{"name":"integration/a2a","id":203,"artifact":{{"json":{raw_card},"digest":"{digest}","media_type":"application/a2a-agent-card+json","size":{}}}}}]}}]"#,
             raw_card.len()
         );
         let path = std::env::temp_dir().join(format!(
@@ -1484,10 +1607,10 @@ mod tests {
             REQUEST_ID.fetch_add(1, Ordering::Relaxed)
         ));
         fs::write(&path, record).expect("write record collection");
-        let (record, record_url) = load_record(path.to_str().expect("temp path is utf8"))
+        let record = load_record(path.to_str().expect("temp path is utf8"))
             .await
             .expect("load one-record collection");
-        let (resolved, source) = resolve_card(record, record_url.as_ref())
+        let (resolved, source) = resolve_card(record.record, record.base.as_ref())
             .await
             .expect("resolve exact embedded artifact bytes");
         assert_eq!(source, CardSource::Artifact);
@@ -1508,7 +1631,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_current_and_legacy_requests() {
+    fn builds_current_and_vendor_requests() {
         let current = request_payload(
             &ProtocolMode::JsonRpc {
                 endpoint: "https://agent.example/rpc".into(),
@@ -1524,8 +1647,8 @@ mod tests {
         assert_eq!(current["params"]["message"]["role"], "ROLE_USER");
         assert!(current["params"]["message"]["parts"][0]["kind"].is_null());
         assert_eq!(current["params"]["message"]["parts"][0]["text"], "hello");
-        let legacy = request_payload(
-            &ProtocolMode::LegacyServiceEndpoint {
+        let vendor = request_payload(
+            &ProtocolMode::VendorServiceEndpoint {
                 endpoint: "http://127.0.0.1:1337/a2a".into(),
             },
             Some("remote"),
@@ -1534,8 +1657,46 @@ mod tests {
             None,
             "hello",
         );
-        assert_eq!(legacy["method"], "agent/sendMessage");
-        assert_eq!(legacy["params"]["agentId"], "remote");
+        assert_eq!(vendor["method"], "agent/sendMessage");
+        assert_eq!(vendor["params"]["agentId"], "remote");
+    }
+
+    #[test]
+    fn sends_a2a_version_header_for_standard_modes_only() {
+        let client = Client::new();
+        for (mode, expected) in [
+            (
+                ProtocolMode::JsonRpc {
+                    endpoint: "https://agent.example/rpc".into(),
+                    protocol_version: Some("1.0".into()),
+                },
+                Some("1.0"),
+            ),
+            (
+                ProtocolMode::JsonRpc {
+                    endpoint: "https://agent.example/rpc".into(),
+                    protocol_version: Some("0.3".into()),
+                },
+                Some("0.3"),
+            ),
+            (
+                ProtocolMode::VendorServiceEndpoint {
+                    endpoint: "https://agent.example/rpc".into(),
+                },
+                None,
+            ),
+        ] {
+            let request = protocol_request(&client, &mode, mode.endpoint())
+                .build()
+                .expect("request builds");
+            assert_eq!(
+                request
+                    .headers()
+                    .get("A2A-Version")
+                    .and_then(|value| value.to_str().ok()),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -1552,7 +1713,8 @@ mod tests {
             "hello",
         );
         assert_eq!(request["method"], "message/send");
-        assert_eq!(request["params"]["contextId"], "buzz-session");
+        assert!(request["params"]["contextId"].is_null());
+        assert_eq!(request["params"]["message"]["contextId"], "buzz-session");
         assert_eq!(request["params"]["message"]["parts"][0]["kind"], "text");
     }
 
@@ -1675,6 +1837,7 @@ mod tests {
             space_ref: Some("space-1".into()),
             channel_ref: Some("channel-1".into()),
             agent_ref: Some("agent-1".into()),
+            context_id: None,
             task_poll_secs: DEFAULT_TASK_POLL_SECS,
         })
         .expect("metadata");
@@ -1693,9 +1856,15 @@ mod tests {
 
     #[tokio::test]
     async fn digest_mismatch_is_rejected() {
-        let descriptor: Descriptor =
-            serde_json::from_value(json!({ "json": { "name": "wrong" }, "digest": "sha256:00" }))
-                .expect("descriptor");
+        let artifact = json!({ "name": "wrong" });
+        let artifact_bytes = serde_json::to_vec(&artifact).expect("artifact serializes");
+        let descriptor: Descriptor = serde_json::from_value(json!({
+            "json": artifact,
+            "digest": "sha256:00",
+            "media_type": "application/json",
+            "size": artifact_bytes.len()
+        }))
+        .expect("descriptor");
         let err = descriptor_bytes(&descriptor, None)
             .await
             .expect_err("mismatch");
@@ -1709,6 +1878,7 @@ mod tests {
             &json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": 1 } }),
             &mut sessions,
             "remote-agent",
+            None,
         )
         .expect("initialize action")
         .expect("initialize response");
@@ -1722,6 +1892,7 @@ mod tests {
             &json!({ "jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {} }),
             &mut sessions,
             "remote-agent",
+            None,
         )
         .expect("session/new action")
         .expect("session/new response");
@@ -1743,6 +1914,7 @@ mod tests {
             }),
             &mut sessions,
             "remote-agent",
+            None,
         )
         .expect("session/prompt action")
         .expect("session/prompt request");
@@ -1925,6 +2097,7 @@ mod tests {
             &json!({ "jsonrpc": "2.0", "method": "unknown/notification" }),
             &mut sessions,
             "remote-agent",
+            None,
         )
         .expect("notification is valid");
         assert!(action.is_none());
@@ -1941,6 +2114,7 @@ mod tests {
             }),
             &mut sessions,
             "remote-agent",
+            None,
         )
         .expect("cancel is valid")
         .expect("cancel action");
@@ -1970,7 +2144,9 @@ mod tests {
     #[tokio::test]
     async fn remote_artifact_requires_a_digest_before_fetch() {
         let descriptor: Descriptor = serde_json::from_value(json!({
-            "urls": ["https://agent.example/card.json"]
+            "urls": ["https://agent.example/card.json"],
+            "media_type": "application/a2a-agent-card+json",
+            "size": 1
         }))
         .expect("descriptor");
         let error = descriptor_bytes(&descriptor, None)

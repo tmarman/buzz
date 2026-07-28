@@ -13,10 +13,12 @@ OASF Agent Record -> A2A Agent Card -> A2A JSON-RPC -> ACP stdio -> Buzz
 
 The current adapter prefers an A2A JSON-RPC interface declared in
 `supportedInterfaces`. It selects `SendMessage`/`GetTask` for A2A 1.x and
-`message/send`/`tasks/get` for A2A 0.3. It also has a named compatibility path
-for an older service card (`serviceEndpoint` plus `agent/sendMessage` and
-`agent/getTask`). The compatibility path is not a new protocol. Task responses
-are polled until a terminal state or the bounded timeout.
+`message/send`/`tasks/get` for A2A 0.3. It sends the matching `A2A-Version`
+header on every standard A2A request. It also has an explicit vendor
+compatibility path for a non-standard card shape (`serviceEndpoint` plus
+`agent/sendMessage` and `agent/getTask`). The compatibility path is not an A2A
+release contract. Task responses are polled with bounded backoff until a
+terminal state or the configured timeout.
 
 ## Configure in Buzz
 
@@ -47,11 +49,11 @@ Or set `BUZZ_A2A_AGENT_RECORD`. The record can be a local file or an HTTP(S)
 URL. Use `BUZZ_A2A_BEARER_TOKEN` only when the remote A2A endpoint requires it.
 The token is supplied by the operator and is never read from the public record.
 
-The adapter requires and validates an OASF artifact `sha256` digest for every
-artifact fetched over the network. It also validates a declared artifact size
-when present. It accepts the OASF `data.card_data` field only as an explicit
-deprecated compatibility fallback because current OASF schemas prefer an
-artifact descriptor.
+The adapter requires the OASF descriptor fields `digest`, `media_type`, and
+`size` for every artifact. It validates the SHA-256 digest and exact size, and
+it accepts only JSON media types. It accepts the OASF `data.card_data` field
+only as an explicit deprecated compatibility fallback because current OASF
+schemas prefer an artifact descriptor.
 
 Remote records and card/artifact endpoints must use HTTPS. HTTP is accepted
 only for loopback hosts. Redirects are disabled. A bearer token is sent only
@@ -63,7 +65,10 @@ unchecked DNS lookup for the request.
 
 The optional `--agency-ref`, `--space-ref`, and `--agent-ref` flags project
 stable host context references into A2A `metadata`. The source record does
-not supply commands, environment variables, or credentials.
+not supply commands, environment variables, or credentials. New conversations
+use random UUID context identifiers by default. An operator can supply a stable
+identifier with `--context-id` or `BUZZ_A2A_CONTEXT_ID` when the host has a
+durable conversation reference to preserve intentionally.
 
 ## Scope and trust boundary
 
@@ -77,3 +82,11 @@ This is an experimental adapter. It does not implement AGNTCY Directory
 registration, OASF custom taxonomy exchange, A2A streaming, push notifications,
 or Surface rendering. Those are separate integration layers that can build on
 the real invocation seam without inventing a parallel agency protocol.
+
+OASF defines the record schema; it does not define how records are discovered
+or transported. The current adapter resolves a reviewed local path or HTTPS
+URL. Authenticity is therefore based on the operator's review and, for remote
+records, the HTTPS connection. OASF 1.1 records do not carry a general record
+signature. Domain-JWKS verification is the next planned trust layer. Optional
+AGNTCY Directory resolution can follow when interoperable Directory identity
+and verification are required.

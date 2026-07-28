@@ -80,7 +80,7 @@ export function buildRemoteAgencyManagedAgentInput(
     throw new Error("Remote Agent does not advertise a reviewed A2A endpoint");
   }
   return {
-    name: `Remote Agency · proxied by Buzz · ${agent.name}`,
+    name: agent.name,
     acpCommand: "buzz-acp",
     agentCommand: "buzz-a2a-acp",
     harnessOverride: true,
