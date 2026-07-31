@@ -63,12 +63,34 @@ record. The adapter resolves each hostname, applies the address policy, and
 pins the request client to the checked address. It does not perform a second
 unchecked DNS lookup for the request.
 
-The optional `--agency-ref`, `--space-ref`, and `--agent-ref` flags project
-stable host context references into A2A `metadata`. The source record does
-not supply commands, environment variables, or credentials. New conversations
-use random UUID context identifiers by default. An operator can supply a stable
-identifier with `--context-id` or `BUZZ_A2A_CONTEXT_ID` when the host has a
-durable conversation reference to preserve intentionally.
+The source record does not supply commands, environment variables, or
+credentials. New conversations use random UUID context identifiers by
+default. An operator can supply a stable identifier with `--context-id` or
+`BUZZ_A2A_CONTEXT_ID` when the host has a durable A2A conversation reference
+to preserve intentionally.
+
+## A2A extensions
+
+Use `--extensions-json` or `BUZZ_A2A_EXTENSIONS_JSON` to activate optional A2A
+protocol extensions. The value must be a JSON object. Each key must be an exact
+extension URI advertised by the Agent Card. Each value is the metadata that the
+adapter sends for that extension.
+
+```json
+{
+  "https://example.com/a2a/extensions/work-context/v1": {
+    "organizationRef": "https://example.com/organizations/acme",
+    "spaceRef": "https://example.com/spaces/project-1"
+  }
+}
+```
+
+For a standard A2A interface, the adapter sends the configured URIs in the
+`A2A-Extensions` header. It also sends the URI list and metadata on the A2A
+message. If no extensions are configured, the adapter omits the header and both
+message fields. The adapter rejects unadvertised extensions and rejects a card
+whose required extension is not configured. The vendor compatibility path does
+not support A2A extensions.
 
 ## Scope and trust boundary
 
@@ -82,6 +104,10 @@ This is an experimental adapter. It does not implement AGNTCY Directory
 registration, OASF custom taxonomy exchange, A2A streaming, push notifications,
 or Surface rendering. Those are separate integration layers that can build on
 the real invocation seam without inventing a parallel agency protocol.
+
+ACP cancellation currently stops the local Buzz turn and aborts the adapter's
+request future. The adapter does not yet send an A2A task cancellation request,
+so a task that the source runtime already accepted can continue remotely.
 
 OASF defines the record schema; it does not define how records are discovered
 or transported. The current adapter resolves a reviewed local path or HTTPS
