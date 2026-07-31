@@ -5,7 +5,13 @@
 //! signing keys.  Execution is supplied by the separately packaged
 //! `buzz-a2a-acp` adapter.
 
-use std::{collections::BTreeSet, net::IpAddr, path::PathBuf, sync::OnceLock, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::IpAddr,
+    path::PathBuf,
+    sync::OnceLock,
+    time::Duration,
+};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -207,14 +213,31 @@ pub struct RemoteAgencyDescriptor {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgencyBinding {
+    #[serde(default)]
+    pub community_id: String,
+    #[serde(default)]
+    pub community_relay_url: String,
     pub source_url: String,
     pub agency_id: String,
+    #[serde(default)]
+    pub agency_name: String,
     pub agent_ids: Vec<String>,
     pub space_ids: Vec<String>,
     pub channel_ids: Vec<String>,
     #[serde(default)]
+    pub space_bindings: Vec<RemoteAgencySpaceBinding>,
+    #[serde(default)]
     pub proxies: Vec<RemoteAgencyProxy>,
     pub joined_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAgencySpaceBinding {
+    pub space_id: String,
+    #[serde(default)]
+    pub space_name: String,
+    pub channel_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -702,8 +725,15 @@ pub async fn preview_remote_agency(source_url: String) -> Result<RemoteAgencyDes
 }
 
 #[tauri::command]
-pub fn list_remote_agencies(app: AppHandle) -> Result<Vec<RemoteAgencyBinding>, String> {
-    load_bindings(&app)
+pub fn list_remote_agencies(
+    community_id: String,
+    app: AppHandle,
+) -> Result<Vec<RemoteAgencyBinding>, String> {
+    let community_id = validate_community_id(&community_id)?;
+    Ok(load_bindings(&app)?
+        .into_iter()
+        .filter(|binding| binding.community_id == community_id)
+        .collect())
 }
 
 #[tauri::command]
@@ -733,21 +763,69 @@ pub fn store_remote_agency_bearer_token(
 
 #[tauri::command]
 pub fn save_remote_agency_binding(
-    mut binding: RemoteAgencyBinding,
+    binding: RemoteAgencyBinding,
     app: AppHandle,
 ) -> Result<RemoteAgencyBinding, String> {
+    let binding = normalize_remote_agency_binding(binding)?;
+    let mut bindings = load_bindings(&app)?;
+    bindings.retain(|existing| {
+        existing.community_id != binding.community_id
+            || existing.agency_id != binding.agency_id
+            || (existing.source_url != binding.source_url
+                && !equivalent_loopback_agency_source(&existing.source_url, &binding.source_url))
+    });
+    bindings.push(binding.clone());
+    validate_community_space_bindings(&bindings)?;
+    bindings.sort_by(|left, right| {
+        (&left.community_id, &left.source_url).cmp(&(&right.community_id, &right.source_url))
+    });
+    let payload = serde_json::to_vec_pretty(&bindings)
+        .map_err(|error| format!("failed to serialize remote agencies: {error}"))?;
+    crate::managed_agents::atomic_write_json_restricted(&binding_path(&app)?, &payload)?;
+    Ok(binding)
+}
+
+fn validate_community_id(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
+        return Err("Remote Agency binding has an invalid community id".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_remote_agency_binding(
+    mut binding: RemoteAgencyBinding,
+) -> Result<RemoteAgencyBinding, String> {
+    binding.community_id = validate_community_id(&binding.community_id)?;
+    binding.community_relay_url = buzz_core_pkg::relay::normalize_relay_url(
+        &binding.community_relay_url,
+    )
+    .map_err(|error| format!("Remote Agency binding has an invalid community relay: {error}"))?;
     let source = validate_remote_agency_url(&binding.source_url)?;
     binding.source_url = source.to_string();
     binding.agency_id = binding.agency_id.trim().to_string();
     if binding.agency_id.is_empty() || binding.agency_id.len() > 128 {
         return Err("Remote Agency binding has an invalid agency id".to_string());
     }
-    binding.agent_ids.sort();
-    binding.agent_ids.dedup();
-    binding.space_ids.sort();
-    binding.space_ids.dedup();
-    binding.channel_ids.sort();
-    binding.channel_ids.dedup();
+    binding.agency_name = sanitize_untrusted_text(&binding.agency_name);
+    if binding.agency_name.is_empty() || binding.agency_name.len() > MAX_TEXT_BYTES {
+        binding.agency_name = binding.agency_id.clone();
+    }
+    let space_names: BTreeMap<_, _> = binding
+        .space_bindings
+        .iter()
+        .map(|space_binding| {
+            (
+                (
+                    space_binding.channel_id.as_str(),
+                    space_binding.space_id.as_str(),
+                ),
+                sanitize_untrusted_text(&space_binding.space_name),
+            )
+        })
+        .collect();
+    let mut proxy_channels = BTreeMap::new();
+    let mut proxy_pubkeys = BTreeMap::new();
     for proxy in &binding.proxies {
         if proxy.agent_id.is_empty()
             || proxy.agent_id.len() > 128
@@ -781,6 +859,26 @@ pub fn save_remote_agency_binding(
             return Err("Remote Agency binding has an invalid verification method".to_string());
         }
         validate_remote_agency_url(&proxy.record_url)?;
+        let proxy_key = (proxy.agent_id.as_str(), proxy.channel_id.as_str());
+        if proxy_channels
+            .insert(proxy_key, proxy.space_id.as_deref())
+            .is_some_and(|existing| existing != proxy.space_id.as_deref())
+        {
+            return Err(
+                "A Remote Agency agent can have only one proxy per Buzz channel".to_string(),
+            );
+        }
+        if proxy_pubkeys
+            .insert(
+                proxy.pubkey.as_str(),
+                (proxy.agent_id.as_str(), proxy.channel_id.as_str()),
+            )
+            .is_some_and(|existing| existing != proxy_key)
+        {
+            return Err(
+                "A Remote Agency proxy identity can belong to only one channel".to_string(),
+            );
+        }
     }
     binding.proxies.sort_by(|left, right| {
         (&left.agent_id, &left.channel_id, &left.space_id).cmp(&(
@@ -790,22 +888,63 @@ pub fn save_remote_agency_binding(
         ))
     });
     binding.proxies.dedup_by(|left, right| {
-        left.agent_id == right.agent_id
-            && left.channel_id == right.channel_id
-            && left.space_id == right.space_id
+        left.agent_id == right.agent_id && left.channel_id == right.channel_id
     });
-    let mut bindings = load_bindings(&app)?;
-    bindings.retain(|existing| {
-        existing.agency_id != binding.agency_id
-            || (existing.source_url != binding.source_url
-                && !equivalent_loopback_agency_source(&existing.source_url, &binding.source_url))
-    });
-    bindings.push(binding.clone());
-    bindings.sort_by(|left, right| left.source_url.cmp(&right.source_url));
-    let payload = serde_json::to_vec_pretty(&bindings)
-        .map_err(|error| format!("failed to serialize remote agencies: {error}"))?;
-    crate::managed_agents::atomic_write_json_restricted(&binding_path(&app)?, &payload)?;
+
+    let mut agent_ids = BTreeSet::new();
+    let mut space_ids = BTreeSet::new();
+    let mut channel_ids = BTreeSet::new();
+    let mut space_by_channel = BTreeMap::new();
+    for proxy in &binding.proxies {
+        agent_ids.insert(proxy.agent_id.clone());
+        channel_ids.insert(proxy.channel_id.clone());
+        if let Some(space_id) = proxy.space_id.as_ref() {
+            space_ids.insert(space_id.clone());
+            if space_by_channel
+                .insert(proxy.channel_id.clone(), space_id.clone())
+                .is_some_and(|existing| existing != *space_id)
+            {
+                return Err("A Buzz channel can have only one primary Space binding".to_string());
+            }
+        }
+    }
+    binding.agent_ids = agent_ids.into_iter().collect();
+    binding.space_ids = space_ids.into_iter().collect();
+    binding.channel_ids = channel_ids.into_iter().collect();
+    binding.space_bindings = space_by_channel
+        .into_iter()
+        .map(|(channel_id, space_id)| RemoteAgencySpaceBinding {
+            space_name: space_names
+                .get(&(channel_id.as_str(), space_id.as_str()))
+                .filter(|value| !value.is_empty() && value.len() <= MAX_TEXT_BYTES)
+                .cloned()
+                .unwrap_or_else(|| space_id.clone()),
+            space_id,
+            channel_id,
+        })
+        .collect();
     Ok(binding)
+}
+
+fn validate_community_space_bindings(bindings: &[RemoteAgencyBinding]) -> Result<(), String> {
+    let mut claimed_channels = BTreeSet::new();
+    for binding in bindings {
+        if binding.community_id.is_empty() {
+            // Legacy unscoped records remain readable but are intentionally
+            // invisible until the operator reconnects them to a community.
+            continue;
+        }
+        for space_binding in &binding.space_bindings {
+            let claim = (
+                binding.community_id.as_str(),
+                space_binding.channel_id.as_str(),
+            );
+            if !claimed_channels.insert(claim) {
+                return Err("A Buzz channel can have only one primary Space binding".to_string());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -11,8 +11,8 @@ import {
 } from "@/features/agents/lib/remoteAgencyJoin";
 import { addChannelMembers, updateManagedAgent } from "@/shared/api/tauri";
 import {
-  startManagedAgent,
-  stopManagedAgent,
+  startManagedAgentRuntime,
+  stopManagedAgentRuntime,
 } from "@/shared/api/tauriManagedAgents";
 import type { RemoteAgencyDescriptor } from "@/shared/api/remoteAgencyTypes";
 import {
@@ -36,6 +36,7 @@ import {
 import { Input } from "@/shared/ui/input";
 
 type RemoteAgencyDialogProps = {
+  community: { id: string; name: string; relayUrl: string };
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onBindingChange?: () => void;
@@ -48,6 +49,7 @@ function targetChannels(channels: Channel[] | undefined) {
 }
 
 export function RemoteAgencyDialog({
+  community,
   open,
   onOpenChange,
   onBindingChange,
@@ -124,13 +126,31 @@ export function RemoteAgencyDialog({
     try {
       const joinedPubkeys: string[] = [];
       const failures: string[] = [];
-      const currentBindings = await listRemoteAgencies();
+      const currentBindings = await listRemoteAgencies(community.id);
       const existingBinding = findRemoteAgencyBinding(
         currentBindings,
         descriptor,
       );
       const proxies = [...(existingBinding?.proxies ?? [])];
       const bearerToken = bearerTokenRef.current?.value ?? "";
+      const selectedSpaceId = selectedSpaceIds[0] ?? null;
+      const existingChannelClaim = currentBindings
+        .flatMap((binding) =>
+          binding.spaceBindings.map((spaceBinding) => ({
+            binding,
+            ...spaceBinding,
+          })),
+        )
+        .find((binding) => binding.channelId === channelId);
+      if (
+        existingChannelClaim &&
+        (existingChannelClaim.binding !== existingBinding ||
+          existingChannelClaim.spaceId !== selectedSpaceId)
+      ) {
+        throw new Error(
+          "This channel already has a primary Space. Choose another channel or its existing Space connection.",
+        );
+      }
       for (const agentId of selectedAgentIds) {
         const remote = descriptor.agents.find((agent) => agent.id === agentId);
         if (!remote) continue;
@@ -139,7 +159,6 @@ export function RemoteAgencyDialog({
             `${remote.name} no longer advertises a public OASF Agent Record and reviewed A2A endpoint`,
           );
         }
-        const selectedSpaceId = selectedSpaceIds[0];
         if (bearerToken) {
           await storeRemoteAgencyBearerToken({
             recordUrl: remote.recordUrl,
@@ -151,7 +170,6 @@ export function RemoteAgencyDialog({
           proxies,
           remote.id,
           channelId,
-          selectedSpaceId ?? null,
         );
         if (existingProxy) {
           joinedPubkeys.push(existingProxy.pubkey);
@@ -160,9 +178,12 @@ export function RemoteAgencyDialog({
               descriptor,
               remote,
               channelId,
-              selectedSpaceId ?? null,
+              selectedSpaceId,
             );
-            await stopManagedAgent(existingProxy.pubkey);
+            await stopManagedAgentRuntime(
+              existingProxy.pubkey,
+              community.relayUrl,
+            );
             await updateManagedAgent({
               pubkey: existingProxy.pubkey,
               name: desired.name,
@@ -176,6 +197,7 @@ export function RemoteAgencyDialog({
             const existingProxyIndex = proxies.indexOf(existingProxy);
             proxies[existingProxyIndex] = {
               ...existingProxy,
+              spaceId: selectedSpaceId,
               recordUrl: remote.recordUrl,
               recordRevision: remote.recordRevision,
               recordCid: null,
@@ -187,10 +209,10 @@ export function RemoteAgencyDialog({
               bindingFromRemoteAgencyProxies(
                 descriptor,
                 proxies,
+                community,
                 existingBinding?.joinedAt,
               ),
             );
-            await startManagedAgent(existingProxy.pubkey);
           } catch (cause) {
             failures.push(
               `${remote.name}: ${
@@ -205,14 +227,14 @@ export function RemoteAgencyDialog({
             descriptor,
             remote,
             channelId,
-            selectedSpaceId ?? null,
+            selectedSpaceId,
           ),
         );
         proxies.push({
           agentId: remote.id,
           pubkey: created.agent.pubkey,
           channelId,
-          spaceId: selectedSpaceId ?? null,
+          spaceId: selectedSpaceId,
           recordUrl: remote.recordUrl,
           recordRevision: remote.recordRevision,
           recordCid: null,
@@ -224,6 +246,7 @@ export function RemoteAgencyDialog({
           bindingFromRemoteAgencyProxies(
             descriptor,
             proxies,
+            community,
             existingBinding?.joinedAt,
           ),
         );
@@ -249,9 +272,21 @@ export function RemoteAgencyDialog({
         bindingFromRemoteAgencyProxies(
           descriptor,
           proxies,
+          community,
           existingBinding?.joinedAt,
         ),
       );
+      for (const pubkey of [...new Set(joinedPubkeys)]) {
+        try {
+          await startManagedAgentRuntime(pubkey, community.relayUrl);
+        } catch (cause) {
+          failures.push(
+            `${truncatePubkey(pubkey)}: community runtime failed to start: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+          );
+        }
+      }
       if (bearerTokenRef.current) bearerTokenRef.current.value = "";
       onBindingChange?.();
       if (failures.length > 0) {
@@ -313,11 +348,11 @@ export function RemoteAgencyDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Network className="size-4" />
-            Add Remote Agency
+            Add Agency connection
           </DialogTitle>
           <DialogDescription>
             Preview an agency manifest, then join selected agents to a Buzz
-            channel through local proxy identities.
+            channel in {community.name} through local proxy identities.
           </DialogDescription>
         </DialogHeader>
 
@@ -491,7 +526,7 @@ export function RemoteAgencyDialog({
             </section>
 
             <label className="block space-y-2 text-sm font-medium">
-              Buzz channel
+              {community.name} channel
               <select
                 className="flex h-9 w-full rounded-lg border border-input/40 bg-background px-3 text-sm"
                 onChange={(event) => setChannelId(event.target.value)}
