@@ -27,7 +27,9 @@ import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import { isRemoteAgencyManagedAgent } from "@/features/agents/lib/remoteAgencyJoin";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
 import {
@@ -40,6 +42,7 @@ import { PageHeader } from "@/shared/ui/PageHeader";
 import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
 
 export function AgentsView() {
+  const { activeCommunity } = useCommunities();
   const { openPersonaProfilePanel, openProfilePanel } = useProfilePanel();
   const { globalConfig } = useGlobalAgentConfig();
   const { data: bakedEnv } = useBakedBuildEnvQuery({ enabled: true });
@@ -92,7 +95,10 @@ export function AgentsView() {
     teamActions.createTeamMutation.isPending ||
     teamActions.updateTeamMutation.isPending ||
     teamActions.deleteTeamMutation.isPending;
-  const runningAgentCount = agents.managedAgents.filter((agent) =>
+  const ordinaryManagedAgents = agents.managedAgents.filter(
+    (agent) => !isRemoteAgencyManagedAgent(agent),
+  );
+  const runningAgentCount = ordinaryManagedAgents.filter((agent) =>
     isManagedAgentActive(agent),
   ).length;
   const hasSavedAgentDefaults = Boolean(
@@ -217,7 +223,7 @@ export function AgentsView() {
               defaultModel={inheritedDefaults.model.value}
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
-              agents={agents.managedAgents}
+              agents={ordinaryManagedAgents}
               agentsError={
                 agents.managedAgentsQuery.error instanceof Error
                   ? agents.managedAgentsQuery.error
@@ -272,7 +278,12 @@ export function AgentsView() {
               }}
             />
 
-            <RemoteAgenciesSection agents={agents.managedAgents} />
+            {activeCommunity ? (
+              <RemoteAgenciesSection
+                agents={agents.managedAgents}
+                community={activeCommunity}
+              />
+            ) : null}
 
             <TeamsSection
               error={

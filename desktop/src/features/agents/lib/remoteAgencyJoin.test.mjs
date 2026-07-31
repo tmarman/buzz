@@ -16,7 +16,19 @@ const descriptor = {
   protocols: ["a2a"],
   capabilities: [],
   agents: [],
-  spaces: [],
+  spaces: [
+    {
+      id: "space-1",
+      name: "Research",
+      description: null,
+      surfaces: [],
+    },
+  ],
+};
+
+const community = {
+  id: "community-1",
+  relayUrl: "wss://community.example",
 };
 
 test("builds the reviewed Remote Agency adapter request without secrets", () => {
@@ -42,9 +54,10 @@ test("builds the reviewed Remote Agency adapter request without secrets", () => 
     "https://example.com/a2a/scout",
   );
   assert.equal(input.envVars.BUZZ_A2A_CHANNEL_REF, "channel-1");
-  assert.equal(input.name, "Scout");
+  assert.equal(input.name, "Remote Agency · proxied by Buzz · Scout");
   assert.equal(input.parallelism, 1);
-  assert.equal(input.startOnAppLaunch, true);
+  assert.equal(input.spawnAfterCreate, false);
+  assert.equal(input.startOnAppLaunch, false);
 });
 
 test("refuses a participant without a reviewed record or endpoint", () => {
@@ -93,20 +106,34 @@ test("reuses a persisted proxy after a partial join failure", () => {
     recordUrl: "https://example.com/agents/scout.json",
     recordRevision: "r1",
   };
-  const binding = bindingFromRemoteAgencyProxies(descriptor, [proxy], "joined");
+  const binding = bindingFromRemoteAgencyProxies(
+    descriptor,
+    [proxy],
+    community,
+    "joined",
+  );
   assert.equal(
-    findRemoteAgencyProxy(binding.proxies, "agent-1", "channel-1", "space-1"),
+    findRemoteAgencyProxy(binding.proxies, "agent-1", "channel-1"),
     proxy,
   );
+  assert.equal(binding.communityId, "community-1");
+  assert.equal(binding.communityRelayUrl, "wss://community.example");
   assert.deepEqual(binding.agentIds, ["agent-1"]);
   assert.deepEqual(binding.spaceIds, ["space-1"]);
   assert.deepEqual(binding.channelIds, ["channel-1"]);
+  assert.deepEqual(binding.spaceBindings, [
+    {
+      channelId: "channel-1",
+      spaceId: "space-1",
+      spaceName: "Research",
+    },
+  ]);
   assert.equal(binding.joinedAt, "joined");
 });
 
 test("matches a persisted Agency binding across local loopback aliases", () => {
   const binding = {
-    ...bindingFromRemoteAgencyProxies(descriptor, [], "joined"),
+    ...bindingFromRemoteAgencyProxies(descriptor, [], community, "joined"),
     sourceUrl: "http://localhost:1337/.well-known/agency.json",
     agencyId: "agency.local",
   };
@@ -118,8 +145,40 @@ test("matches a persisted Agency binding across local loopback aliases", () => {
   assert.equal(findRemoteAgencyBinding([binding], localDescriptor), binding);
 });
 
+test("rejects two primary Spaces for the same community channel", () => {
+  const base = {
+    agentId: "agent-1",
+    pubkey: "a".repeat(64),
+    channelId: "channel-1",
+    recordUrl: "https://example.com/agents/scout.json",
+    recordRevision: "r1",
+  };
+  assert.throws(
+    () =>
+      bindingFromRemoteAgencyProxies(
+        descriptor,
+        [
+          { ...base, spaceId: "space-1" },
+          {
+            ...base,
+            agentId: "agent-2",
+            pubkey: "b".repeat(64),
+            spaceId: "space-2",
+          },
+        ],
+        community,
+      ),
+    /only one primary Space/,
+  );
+});
+
 test("does not migrate a binding across public hosts or Agency identities", () => {
-  const binding = bindingFromRemoteAgencyProxies(descriptor, [], "joined");
+  const binding = bindingFromRemoteAgencyProxies(
+    descriptor,
+    [],
+    community,
+    "joined",
+  );
   assert.equal(
     findRemoteAgencyBinding([binding], {
       ...descriptor,

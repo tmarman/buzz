@@ -14,6 +14,7 @@ import {
   MessagesSquare,
   MonitorCog,
   Moon,
+  Network,
   ShieldAlert,
   Smartphone,
   Smile,
@@ -30,6 +31,9 @@ import type {
 } from "@/features/notifications/hooks";
 import type { SoundName, SoundSlot } from "@/features/notifications/lib/sound";
 import { CommunityMembersSettingsCard } from "@/features/community-members/ui/CommunityMembersSettingsCard";
+import { useManagedAgentsQuery } from "@/features/agents/hooks";
+import { RemoteAgenciesSection } from "@/features/agents/ui/RemoteAgenciesSection";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { CustomEmojiSettingsCard } from "@/features/custom-emoji/ui/CustomEmojiSettingsCard";
 import { LocalArchiveSettingsCard } from "@/features/local-archive/ui/LocalArchiveSettingsCard";
 import {
@@ -97,6 +101,7 @@ export type SettingsSection =
   | "appearance"
   | "shortcuts"
   | "hosted-communities"
+  | "agency-connections"
   | "community-members"
   | "moderation"
   | "custom-emoji"
@@ -117,6 +122,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "appearance",
   "shortcuts",
   "hosted-communities",
+  "agency-connections",
   "community-members",
   "moderation",
   "custom-emoji",
@@ -207,6 +213,12 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     value: "hosted-communities",
     label: "Hosted communities",
     icon: MessagesSquare,
+  },
+  {
+    value: "agency-connections",
+    label: "Agency connections",
+    icon: Network,
+    featureGate: "managed-agents",
   },
   {
     value: "community-members",
@@ -838,6 +850,8 @@ export function renderSettingsSection(
       return <KeyboardShortcutsCard />;
     case "hosted-communities":
       return <HostedCommunitiesSettingsCard />;
+    case "agency-connections":
+      return <AgencyConnectionsSettingsCard />;
     case "community-members":
       return (
         <CommunityMembersSettingsCard currentPubkey={props.currentPubkey} />
@@ -857,4 +871,22 @@ export function renderSettingsSection(
       return exhaustiveCheck;
     }
   }
+}
+
+function AgencyConnectionsSettingsCard() {
+  const { activeCommunity } = useCommunities();
+  const agentsQuery = useManagedAgentsQuery();
+  if (!activeCommunity) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Connect to a community before adding an Agency runtime.
+      </p>
+    );
+  }
+  return (
+    <RemoteAgenciesSection
+      agents={agentsQuery.data ?? []}
+      community={activeCommunity}
+    />
+  );
 }

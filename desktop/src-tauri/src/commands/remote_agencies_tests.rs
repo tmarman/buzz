@@ -131,6 +131,140 @@ fn legacy_proxy_bindings_default_new_provenance_fields() {
     assert_eq!(proxy.record_verification, None);
 }
 
+fn binding(
+    community_id: &str,
+    agency_id: &str,
+    channel_id: &str,
+    space_id: &str,
+) -> RemoteAgencyBinding {
+    RemoteAgencyBinding {
+        community_id: community_id.to_string(),
+        community_relay_url: "WSS://Relay.Example:443/".to_string(),
+        source_url: format!("https://{agency_id}/.well-known/agency.json"),
+        agency_id: agency_id.to_string(),
+        agency_name: "Example Agency".to_string(),
+        agent_ids: vec!["stale-input-is-derived".to_string()],
+        space_ids: Vec::new(),
+        channel_ids: Vec::new(),
+        space_bindings: Vec::new(),
+        proxies: vec![RemoteAgencyProxy {
+            agent_id: "agent-1".to_string(),
+            pubkey: "a".repeat(64),
+            channel_id: channel_id.to_string(),
+            space_id: Some(space_id.to_string()),
+            record_url: format!("https://{agency_id}/agents/agent-1.json"),
+            record_revision: None,
+            record_cid: None,
+            record_verification: Some("tls-only".to_string()),
+        }],
+        joined_at: "2026-07-31T00:00:00Z".to_string(),
+    }
+}
+
+#[test]
+fn scopes_and_derives_remote_agency_bindings() {
+    let normalized = normalize_remote_agency_binding(binding(
+        " community-1 ",
+        "agency.example",
+        "channel-1",
+        "space-1",
+    ))
+    .unwrap();
+    assert_eq!(normalized.community_id, "community-1");
+    assert_eq!(normalized.community_relay_url, "wss://relay.example");
+    assert_eq!(normalized.agent_ids, ["agent-1"]);
+    assert_eq!(normalized.channel_ids, ["channel-1"]);
+    assert_eq!(normalized.space_ids, ["space-1"]);
+    assert_eq!(
+        normalized.space_bindings,
+        [RemoteAgencySpaceBinding {
+            channel_id: "channel-1".to_string(),
+            space_id: "space-1".to_string(),
+            space_name: "space-1".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn permits_multiple_agencies_per_community_but_one_space_authority_per_channel() {
+    let first = normalize_remote_agency_binding(binding(
+        "community-1",
+        "one.example",
+        "channel-1",
+        "space-1",
+    ))
+    .unwrap();
+    let second_channel = normalize_remote_agency_binding(binding(
+        "community-1",
+        "two.example",
+        "channel-2",
+        "space-2",
+    ))
+    .unwrap();
+    assert!(validate_community_space_bindings(&[first.clone(), second_channel]).is_ok());
+
+    let conflicting = normalize_remote_agency_binding(binding(
+        "community-1",
+        "two.example",
+        "channel-1",
+        "space-2",
+    ))
+    .unwrap();
+    assert!(validate_community_space_bindings(&[first, conflicting]).is_err());
+}
+
+#[test]
+fn allows_the_same_channel_id_in_different_communities() {
+    let first = normalize_remote_agency_binding(binding(
+        "community-1",
+        "one.example",
+        "channel-1",
+        "space-1",
+    ))
+    .unwrap();
+    let second = normalize_remote_agency_binding(binding(
+        "community-2",
+        "two.example",
+        "channel-1",
+        "space-2",
+    ))
+    .unwrap();
+    assert!(validate_community_space_bindings(&[first, second]).is_ok());
+}
+
+#[test]
+fn rejects_ambiguous_proxy_identity_or_space_mappings() {
+    let mut duplicate_agent = binding("community-1", "one.example", "channel-1", "space-1");
+    let mut conflicting = duplicate_agent.proxies[0].clone();
+    conflicting.space_id = Some("space-2".to_string());
+    duplicate_agent.proxies.push(conflicting);
+    assert!(normalize_remote_agency_binding(duplicate_agent).is_err());
+
+    let mut duplicate_identity = binding("community-1", "one.example", "channel-1", "space-1");
+    let mut conflicting = duplicate_identity.proxies[0].clone();
+    conflicting.agent_id = "agent-2".to_string();
+    conflicting.channel_id = "channel-2".to_string();
+    duplicate_identity.proxies.push(conflicting);
+    assert!(normalize_remote_agency_binding(duplicate_identity).is_err());
+}
+
+#[test]
+fn legacy_bindings_remain_readable_but_unscoped() {
+    let legacy: RemoteAgencyBinding = serde_json::from_value(serde_json::json!({
+        "sourceUrl": "https://agency.example/.well-known/agency.json",
+        "agencyId": "agency.example",
+        "agentIds": [],
+        "spaceIds": [],
+        "channelIds": [],
+        "proxies": [],
+        "joinedAt": "2026-07-31T00:00:00Z"
+    }))
+    .expect("legacy binding remains readable");
+    assert!(legacy.community_id.is_empty());
+    assert!(legacy.community_relay_url.is_empty());
+    assert!(legacy.space_bindings.is_empty());
+}
+
 #[test]
 fn parses_public_projection_and_drops_private_fields() {
     let json = br#"{

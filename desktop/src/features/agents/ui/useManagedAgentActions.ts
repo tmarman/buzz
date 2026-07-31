@@ -29,6 +29,7 @@ import {
   startManagedAgentWithRules,
   stopManagedAgentWithRules,
 } from "../lib/managedAgentControlActions";
+import { isRemoteAgencyManagedAgent } from "../lib/remoteAgencyJoin";
 import { clearActiveTurnsForAgentOnStop } from "../managedAgentRuntimeHooks";
 import {
   availableRuntimesForStart,
@@ -369,7 +370,10 @@ export function useManagedAgentActions() {
 
   async function handleBulkStopRunning() {
     await runBulkAction(
-      managedAgents.filter((a) => isManagedAgentActive(a)),
+      managedAgents.filter(
+        (agent) =>
+          isManagedAgentActive(agent) && !isRemoteAgencyManagedAgent(agent),
+      ),
       "Stop",
       "stop",
       async (a) => {

@@ -35,13 +35,23 @@ export type RemoteAgencyDescriptor = {
 };
 
 export type RemoteAgencyBinding = {
+  communityId: string;
+  communityRelayUrl: string;
   sourceUrl: string;
   agencyId: string;
+  agencyName: string;
   agentIds: string[];
   spaceIds: string[];
   channelIds: string[];
+  spaceBindings: RemoteAgencySpaceBinding[];
   proxies: RemoteAgencyProxy[];
   joinedAt: string;
+};
+
+export type RemoteAgencySpaceBinding = {
+  spaceId: string;
+  spaceName: string;
+  channelId: string;
 };
 
 export type RemoteAgencyProxy = {

@@ -11385,6 +11385,10 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "list_managed_agents":
         return handleListManagedAgents(activeConfig);
+      case "list_remote_agencies":
+        return [];
+      case "save_remote_agency_binding":
+        return (payload as { binding: unknown }).binding;
       case "get_agent_memory":
         return handleGetAgentMemory(
           (payload as Parameters<typeof handleGetAgentMemory>[0]) ?? {},

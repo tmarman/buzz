@@ -12,8 +12,12 @@ export async function previewRemoteAgency(
   });
 }
 
-export async function listRemoteAgencies(): Promise<RemoteAgencyBinding[]> {
-  return invokeTauri<RemoteAgencyBinding[]>("list_remote_agencies");
+export async function listRemoteAgencies(
+  communityId: string,
+): Promise<RemoteAgencyBinding[]> {
+  return invokeTauri<RemoteAgencyBinding[]>("list_remote_agencies", {
+    communityId,
+  });
 }
 
 export async function storeRemoteAgencyBearerToken(input: {
