@@ -79,7 +79,6 @@ use tray_menu::show_main_window;
 
 #[cfg(target_os = "macos")]
 const INITIAL_RENDER_READY_EVENT: &str = "initial-render-ready";
-
 fn reveal_initial_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
     if let Err(error) = window.show() {
         eprintln!("buzz-desktop: failed to reveal main window: {error}");
@@ -89,7 +88,6 @@ fn reveal_initial_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
         eprintln!("buzz-desktop: failed to focus main window: {error}");
     }
 }
-
 #[cfg(target_os = "macos")]
 fn set_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
     // The window remains transparent at runtime for vibrancy. Use an opaque
@@ -99,7 +97,6 @@ fn set_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
         eprintln!("buzz-desktop: failed to set initial window backing: {error}");
     }
 }
-
 #[cfg(target_os = "macos")]
 async fn clear_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
